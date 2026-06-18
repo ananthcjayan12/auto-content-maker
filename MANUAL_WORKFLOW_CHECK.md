@@ -210,6 +210,14 @@ curl -sS -X POST \
 
 Use `force=true` when you want to regenerate even if today already has a ready poster.
 
+The full poster step makes the second Gemini call through the Interactions API using:
+
+```text
+model: gemini-3.1-flash-image
+aspect_ratio: 9:16
+image_size: 1K
+```
+
 Expected success shape:
 
 ```json

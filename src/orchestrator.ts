@@ -89,6 +89,10 @@ function geminiEndpoint(model: string): string {
   return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 }
 
+function geminiInteractionsEndpoint(): string {
+  return "https://generativelanguage.googleapis.com/v1beta/interactions";
+}
+
 async function callGemini(input: {
   apiKey: string;
   model: string;
@@ -119,6 +123,59 @@ async function callGemini(input: {
       "message" in payload.error
         ? String(payload.error.message)
         : `Gemini request failed with HTTP ${response.status}`;
+    throw new Error(message);
+  }
+  return payload as Record<string, unknown>;
+}
+
+async function callGeminiImageInteraction(input: {
+  apiKey: string;
+  model: string;
+  prompt: string;
+  references: ImageBase64Reference[];
+}): Promise<Record<string, unknown>> {
+  const response = await fetch(geminiInteractionsEndpoint(), {
+    method: "POST",
+    headers: {
+      "Api-Revision": "2026-05-20",
+      "Content-Type": "application/json",
+      "x-goog-api-key": input.apiKey,
+    },
+    body: JSON.stringify({
+      model: input.model,
+      input: [
+        { type: "text", text: input.prompt },
+        ...input.references.map((reference) => ({
+          type: "image",
+          data: reference.base64,
+          mime_type: reference.contentType,
+        })),
+      ],
+      response_format: {
+        type: "image",
+        mime_type: "image/png",
+        aspect_ratio: "9:16",
+        image_size: "1K",
+      },
+    }),
+  });
+  const text = await response.text();
+  let payload: unknown = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = { raw: text };
+  }
+  if (!response.ok) {
+    const message =
+      typeof payload === "object" &&
+      payload &&
+      "error" in payload &&
+      typeof payload.error === "object" &&
+      payload.error &&
+      "message" in payload.error
+        ? String(payload.error.message)
+        : `Gemini image request failed with HTTP ${response.status}`;
     throw new Error(message);
   }
   return payload as Record<string, unknown>;
@@ -156,6 +213,23 @@ function textParts(response: Record<string, unknown>): string[] {
 function imagePart(
   response: Record<string, unknown>,
 ): { mimeType: string; data: string } | null {
+  if (
+    "output_image" in response &&
+    typeof response.output_image === "object" &&
+    response.output_image &&
+    "data" in response.output_image &&
+    typeof response.output_image.data === "string"
+  ) {
+    return {
+      mimeType:
+        "mime_type" in response.output_image &&
+        typeof response.output_image.mime_type === "string"
+          ? response.output_image.mime_type
+          : "image/png",
+      data: response.output_image.data,
+    };
+  }
+
   const candidates = Array.isArray(response.candidates)
     ? response.candidates
     : [];
@@ -439,33 +513,15 @@ export async function runPosterOrchestrator(input: {
         publicBaseUrl: base,
       }),
     ]);
-    const imageInputParts: unknown[] = [{ text: prompt }];
-    for (const reference of [logo, board, posterReference]) {
-      if (reference) {
-        imageInputParts.push({
-          inlineData: {
-            mimeType: reference.contentType,
-            data: reference.base64,
-          },
-        });
-      }
-    }
+    const references = [logo, board, posterReference].filter(
+      (reference): reference is ImageBase64Reference => Boolean(reference),
+    );
 
-    const imageResponse = await callGemini({
+    const imageResponse = await callGeminiImageInteraction({
       apiKey,
       model: imageModel,
-      body: {
-        contents: [{ role: "user", parts: imageInputParts }],
-        generationConfig: {
-          responseModalities: ["IMAGE"],
-          responseFormat: {
-            image: {
-              aspectRatio: "9:16",
-              imageSize: "1K",
-            },
-          },
-        },
-      },
+      prompt,
+      references,
     });
     const image = imagePart(imageResponse);
     const validationErrors = validateGeneratedPoster({ brand, image, prompt });

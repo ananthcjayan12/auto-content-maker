@@ -603,20 +603,10 @@ describe("daily poster packet worker", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [
-              {
-                content: {
-                  parts: [
-                    {
-                      inlineData: {
-                        mimeType: "image/png",
-                        data: "iVBORw==",
-                      },
-                    },
-                  ],
-                },
-              },
-            ],
+            output_image: {
+              mime_type: "image/png",
+              data: "iVBORw==",
+            },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -647,12 +637,11 @@ describe("daily poster packet worker", () => {
     const imageCall = fetchMock.mock.calls[1];
     expect(imageCall).toBeDefined();
     const imageCallBody = JSON.parse(String(imageCall?.[1]?.body));
-    expect(imageCallBody.generationConfig.responseFormat.image.imageSize).toBe(
-      "1K",
-    );
-    expect(
-      imageCallBody.generationConfig.responseFormat.image.aspectRatio,
-    ).toBe("9:16");
+    expect(String(imageCall?.[0])).toContain("/v1beta/interactions");
+    expect(imageCallBody.model).toBe("gemini-3.1-flash-image");
+    expect(imageCallBody.response_format.image_size).toBe("1K");
+    expect(imageCallBody.response_format.aspect_ratio).toBe("9:16");
+    expect(imageCallBody.input).toHaveLength(4);
     expect(env.ASSETS.get).toHaveBeenCalledTimes(3);
     expect(put).toHaveBeenCalledOnce();
   });
