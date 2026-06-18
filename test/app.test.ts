@@ -206,7 +206,10 @@ describe("daily poster packet worker", () => {
     form.set("status", "ready");
     form.set("headline", "Updated with a real reference");
     form.set("requiredText", `${brand.businessName}\n${brand.phone}`);
-    form.set("referenceFile", new File(["png"], "reference.png", { type: "image/png" }));
+    form.set(
+      "referenceFile",
+      new File(["png"], "reference.png", { type: "image/png" }),
+    );
 
     const response = await app.request(
       `/admin/${brand.businessSlug}/packet`,
@@ -216,9 +219,8 @@ describe("daily poster packet worker", () => {
     expect(response.status).toBe(303);
     expect(put).toHaveBeenCalledOnce();
     expect(
-      (
-        await store.getPacket(brand.businessSlug, "awareness", today)
-      )?.productionReferenceImageUrl,
+      (await store.getPacket(brand.businessSlug, "awareness", today))
+        ?.productionReferenceImageUrl,
     ).toContain(
       `/assets/businesses/${brand.businessSlug}/daily/${today}/awareness/reference-`,
     );
