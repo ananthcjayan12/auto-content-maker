@@ -1,0 +1,7 @@
+POSTER_ADMIN_TOKEN=replace-with-a-long-random-secret
+# PUBLIC_BASE_URL and BUSINESS_TIMEZONE have local defaults in wrangler.jsonc.
+# Override them in your Cloudflare Worker environment for production.
+PUBLIC_BASE_URL=http://localhost:8787
+BUSINESS_TIMEZONE=Asia/Kolkata
+R2_BUCKET_NAME=
+R2_PUBLIC_BASE_URL=

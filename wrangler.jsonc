@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "daily-poster-packet",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-18",
+  "workers_dev": true,
+  "vars": {
+    "PUBLIC_BASE_URL": "http://localhost:8787",
+    "BUSINESS_TIMEZONE": "Asia/Kolkata",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "daily-poster-packet-db",
+      "database_id": "replace-with-your-d1-database-id",
+      "migrations_dir": "migrations",
+    },
+  ],
+}
