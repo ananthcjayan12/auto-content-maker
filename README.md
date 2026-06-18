@@ -95,7 +95,7 @@ Create `.dev.vars` for local secrets. Configure production variables and secrets
 POSTER_ADMIN_TOKEN=use-a-long-random-secret
 GEMINI_API_KEY=
 GEMINI_TEXT_MODEL=gemini-3.5-flash
-GEMINI_IMAGE_MODEL=gemini-2.5-flash-image
+GEMINI_IMAGE_MODEL=gemini-3.1-flash-image
 PUBLIC_BASE_URL=https://poster.yourdomain.com
 BUSINESS_TIMEZONE=Asia/Kolkata
 DEFAULT_BUSINESS_SLUG=dr-poojas-smile-craft
@@ -107,7 +107,7 @@ R2_PUBLIC_BASE_URL=
 - `POSTER_ADMIN_TOKEN` is the admin password/token for the dashboard and every `/api/*` route.
 - `GEMINI_API_KEY` is required for automated generation.
 - `GEMINI_TEXT_MODEL` defaults to `gemini-3.5-flash`.
-- `GEMINI_IMAGE_MODEL` defaults to `gemini-2.5-flash-image`.
+- `GEMINI_IMAGE_MODEL` defaults to `gemini-3.1-flash-image` and requests 1K output.
 - `PUBLIC_BASE_URL` is used to build canonical public, JSON, and Markdown URLs.
 - `BUSINESS_TIMEZONE` defaults to `Asia/Kolkata`.
 - `DEFAULT_BUSINESS_SLUG` and `DEFAULT_POSTER_TYPE` control what the Cron trigger generates.

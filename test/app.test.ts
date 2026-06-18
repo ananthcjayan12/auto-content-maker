@@ -644,6 +644,15 @@ describe("daily poster packet worker", () => {
       `https://poster.example.com/assets/businesses/${brand.businessSlug}/generated/awareness/${today}.png`,
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    const imageCall = fetchMock.mock.calls[1];
+    expect(imageCall).toBeDefined();
+    const imageCallBody = JSON.parse(String(imageCall?.[1]?.body));
+    expect(imageCallBody.generationConfig.responseFormat.image.imageSize).toBe(
+      "1K",
+    );
+    expect(
+      imageCallBody.generationConfig.responseFormat.image.aspectRatio,
+    ).toBe("9:16");
     expect(env.ASSETS.get).toHaveBeenCalledTimes(3);
     expect(put).toHaveBeenCalledOnce();
   });
@@ -711,7 +720,7 @@ describe("daily poster packet worker", () => {
       imageContentType: "image/png",
       r2Key: "generated.png",
       geminiTextModel: "gemini-3.5-flash",
-      geminiImageModel: "gemini-2.5-flash-image",
+      geminiImageModel: "gemini-3.1-flash-image",
       geminiJobName: null,
       validationErrors: [],
       failureReason: null,

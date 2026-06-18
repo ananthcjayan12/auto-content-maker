@@ -359,7 +359,7 @@ export async function runPosterOrchestrator(input: {
   const contextJsonUrl = `${contextUrl}.json`;
   const apiKey = env.GEMINI_API_KEY?.trim();
   const textModel = env.GEMINI_TEXT_MODEL || "gemini-3.5-flash";
-  const imageModel = env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
+  const imageModel = env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
 
   const existing = await store.getGeneratedPoster(
     businessSlug,
@@ -458,7 +458,12 @@ export async function runPosterOrchestrator(input: {
         contents: [{ role: "user", parts: imageInputParts }],
         generationConfig: {
           responseModalities: ["IMAGE"],
-          imageConfig: { aspectRatio: "9:16" },
+          responseFormat: {
+            image: {
+              aspectRatio: "9:16",
+              imageSize: "1K",
+            },
+          },
         },
       },
     });

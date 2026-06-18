@@ -229,7 +229,7 @@ Expected success shape:
     "imageContentType": "image/png",
     "r2Key": "businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.png",
     "geminiTextModel": "gemini-3.5-flash",
-    "geminiImageModel": "gemini-2.5-flash-image",
+    "geminiImageModel": "gemini-3.1-flash-image",
     "validationErrors": [],
     "failureReason": null
   }

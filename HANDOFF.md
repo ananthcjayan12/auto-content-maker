@@ -68,7 +68,7 @@ Optional generation variables:
 
 ```dotenv
 GEMINI_TEXT_MODEL=gemini-3.5-flash
-GEMINI_IMAGE_MODEL=gemini-2.5-flash-image
+GEMINI_IMAGE_MODEL=gemini-3.1-flash-image
 DEFAULT_BUSINESS_SLUG=dr-poojas-smile-craft
 DEFAULT_POSTER_TYPE=awareness
 ```
