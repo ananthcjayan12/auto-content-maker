@@ -194,10 +194,12 @@ app.get("/admin/:businessSlug", async (c) => {
     resolveDate(requestedDate, c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE) ??
     todayInTimezone(c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE);
   const packet = await store.getPacket(businessSlug, posterType, selectedDate);
+  const typeReference = await store.getTypeReference(businessSlug, posterType);
   return c.html(
     renderDashboard({
       brand,
       packet,
+      typeReference,
       selectedType: posterType,
       selectedDate,
       publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
@@ -317,6 +319,68 @@ app.post("/admin/:businessSlug/preset", async (c) => {
   });
 });
 
+app.post("/admin/:businessSlug/type-reference", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  const brand = await store.getBrand(businessSlug);
+  if (!brand) {
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  }
+
+  let posterType = "awareness";
+  let date = todayInTimezone(c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE);
+  try {
+    const form = await c.req.formData();
+    posterType = formString(form, "posterType");
+    date = formString(form, "date") || date;
+    if (!isPosterType(posterType)) {
+      return adminRedirect(c, businessSlug, {
+        error: "Invalid poster type.",
+      });
+    }
+    const typeReferenceFile = form.get("typeReferenceFile");
+    let productionReferenceImageUrl =
+      formString(form, "productionReferenceImageUrl") || null;
+    if (isUploadedFile(typeReferenceFile)) {
+      productionReferenceImageUrl = await uploadImage({
+        env: c.env,
+        file: typeReferenceFile,
+        keyPrefix: `businesses/${businessSlug}/types/${posterType}/reference-${Date.now()}`,
+        publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
+      });
+    }
+    await store.upsertTypeReference({
+      businessSlug,
+      posterType,
+      productionReferenceImageUrl,
+      notes: formString(form, "notes") || null,
+    });
+    return adminRedirect(c, businessSlug, {
+      posterType,
+      date,
+      message: "Poster type reference saved successfully.",
+    });
+  } catch (error) {
+    return adminRedirect(c, businessSlug, {
+      posterType,
+      date,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Poster type reference update failed.",
+    });
+  }
+});
+
 app.post("/admin/:businessSlug/packet", async (c) => {
   const businessSlug = c.req.param("businessSlug");
   if (!(await hasAdminAccess(c, businessSlug))) {
@@ -346,7 +410,6 @@ app.post("/admin/:businessSlug/packet", async (c) => {
       });
     }
     const existing = await store.getPacket(businessSlug, posterType, date);
-    const referenceFile = form.get("referenceFile");
     const packetInput = {
       status: formString(form, "status"),
       headline: formString(form, "headline"),
@@ -362,18 +425,12 @@ app.post("/admin/:businessSlug/packet", async (c) => {
       specialInstructions: formLines(form, "specialInstructions"),
       chatgptImagePrompt: formString(form, "chatgptImagePrompt") || undefined,
     };
-    if (
-      isUploadedFile(referenceFile) &&
-      !packetInput.productionReferenceImageUrl
-    ) {
-      packetInput.productionReferenceImageUrl =
-        "https://pending.invalid/reference-image";
-    }
     const preliminary = validatePacket(
       packetInput,
       { businessSlug, posterType, date },
       brand,
       existing,
+      { requireProductionReference: false },
     );
     if (!preliminary.value) {
       return adminRedirect(c, businessSlug, {
@@ -382,19 +439,12 @@ app.post("/admin/:businessSlug/packet", async (c) => {
         error: preliminary.errors.join(" "),
       });
     }
-    if (isUploadedFile(referenceFile)) {
-      packetInput.productionReferenceImageUrl = await uploadImage({
-        env: c.env,
-        file: referenceFile,
-        keyPrefix: `businesses/${businessSlug}/daily/${date}/${posterType}/reference-${Date.now()}`,
-        publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
-      });
-    }
     const validated = validatePacket(
       packetInput,
       { businessSlug, posterType, date },
       brand,
       existing,
+      { requireProductionReference: false },
     );
     if (!validated.value) {
       return adminRedirect(c, businessSlug, {
@@ -461,6 +511,7 @@ async function loadPublicPacket(
   | {
       brand: Awaited<ReturnType<PosterStore["getBrand"]>> & {};
       packet: Awaited<ReturnType<PosterStore["getPacket"]>> & {};
+      typeReference: Awaited<ReturnType<PosterStore["getTypeReference"]>>;
       resolvedDate: string;
     }
   | { error: string; status: 400 | 404 }
@@ -495,7 +546,11 @@ async function loadPublicPacket(
       status: 404 as const,
     };
   }
-  return { brand, packet, resolvedDate };
+  const typeReference = await store.getTypeReference(
+    businessSlug,
+    posterTypeValue,
+  );
+  return { brand, packet, typeReference, resolvedDate };
 }
 
 app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
@@ -526,9 +581,14 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
       dailyPosterPacket: result.packet,
       resolvedDate: result.resolvedDate,
       publicPageUrl: `${base}${explicitPath}`,
+      posterTypeReference: result.typeReference,
+      effectiveProductionReferenceImageUrl:
+        result.typeReference?.productionReferenceImageUrl ??
+        result.packet.productionReferenceImageUrl,
       finalChatGPTInstruction: buildFinalInstruction(
         result.brand,
         result.packet,
+        result.typeReference,
       ),
     });
   }
@@ -536,6 +596,7 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
     renderPosterPage({
       brand: result.brand,
       packet: result.packet,
+      typeReference: result.typeReference,
       resolvedDate: result.resolvedDate,
       publicPageUrl: `${base}${explicitPath}`,
       jsonUrl: `${base}${explicitPath}.json`,

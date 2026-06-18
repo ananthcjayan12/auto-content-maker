@@ -3,6 +3,7 @@ import type {
   DailyPosterPacket,
   PosterStore,
   PosterType,
+  PosterTypeReference,
 } from "./types";
 
 interface BrandRow {
@@ -36,6 +37,15 @@ interface PacketRow {
   additional_reference_images_json: string;
   special_instructions_json: string;
   chatgpt_image_prompt: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TypeReferenceRow {
+  business_slug: string;
+  poster_type: PosterType;
+  production_reference_image_url: string | null;
+  notes: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -105,6 +115,17 @@ function mapPacket(row: PacketRow): DailyPosterPacket {
   };
 }
 
+function mapTypeReference(row: TypeReferenceRow): PosterTypeReference {
+  return {
+    businessSlug: row.business_slug,
+    posterType: row.poster_type,
+    productionReferenceImageUrl: row.production_reference_image_url,
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export class D1PosterStore implements PosterStore {
   constructor(private readonly db: D1Database) {}
 
@@ -160,6 +181,48 @@ export class D1PosterStore implements PosterStore {
       .run();
 
     return (await this.getBrand(brand.businessSlug))!;
+  }
+
+  async getTypeReference(
+    businessSlug: string,
+    posterType: PosterType,
+  ): Promise<PosterTypeReference | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT * FROM poster_type_references
+         WHERE business_slug = ? AND poster_type = ?
+         LIMIT 1`,
+      )
+      .bind(businessSlug, posterType)
+      .first<TypeReferenceRow>();
+    return row ? mapTypeReference(row) : null;
+  }
+
+  async upsertTypeReference(
+    reference: PosterTypeReference,
+  ): Promise<PosterTypeReference> {
+    await this.db
+      .prepare(
+        `INSERT INTO poster_type_references (
+          business_slug, poster_type, production_reference_image_url, notes
+        ) VALUES (?, ?, ?, ?)
+        ON CONFLICT(business_slug, poster_type) DO UPDATE SET
+          production_reference_image_url = excluded.production_reference_image_url,
+          notes = excluded.notes,
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+      )
+      .bind(
+        reference.businessSlug,
+        reference.posterType,
+        reference.productionReferenceImageUrl,
+        reference.notes,
+      )
+      .run();
+
+    return (await this.getTypeReference(
+      reference.businessSlug,
+      reference.posterType,
+    ))!;
   }
 
   async getPacket(

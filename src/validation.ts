@@ -255,6 +255,7 @@ export function validatePacket(
   },
   brand: BusinessBrandSystem,
   existing?: DailyPosterPacket | null,
+  options: { requireProductionReference?: boolean } = {},
 ): ValidationResult<DailyPosterPacket> {
   const errors: string[] = [];
   if (!isObject(input))
@@ -308,7 +309,11 @@ export function validatePacket(
   );
 
   if (!headline) errors.push("headline is required");
-  if (status === "ready" && !productionReferenceImageUrl) {
+  if (
+    options.requireProductionReference !== false &&
+    status === "ready" &&
+    !productionReferenceImageUrl
+  ) {
     errors.push("productionReferenceImageUrl is required when status is ready");
   }
   validatePublicUrl(

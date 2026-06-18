@@ -65,10 +65,26 @@ export interface DailyPosterPacket {
   updatedAt?: string;
 }
 
+export interface PosterTypeReference {
+  businessSlug: string;
+  posterType: PosterType;
+  productionReferenceImageUrl: string | null;
+  notes: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface PosterStore {
   listBrands(): Promise<BusinessBrandSystem[]>;
   getBrand(businessSlug: string): Promise<BusinessBrandSystem | null>;
   upsertBrand(brand: BusinessBrandSystem): Promise<BusinessBrandSystem>;
+  getTypeReference(
+    businessSlug: string,
+    posterType: PosterType,
+  ): Promise<PosterTypeReference | null>;
+  upsertTypeReference(
+    reference: PosterTypeReference,
+  ): Promise<PosterTypeReference>;
   getPacket(
     businessSlug: string,
     posterType: PosterType,

@@ -35,6 +35,22 @@ ON CONFLICT(business_slug) DO UPDATE SET
   default_poster_rules_json = excluded.default_poster_rules_json,
   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
 
+INSERT INTO poster_type_references (
+  business_slug,
+  poster_type,
+  production_reference_image_url,
+  notes
+) VALUES (
+  'dr-poojas-smile-craft',
+  'awareness',
+  'https://placehold.co/1080x1920/E7F7F6/123333.png?text=Awareness+Poster+Reference',
+  'Permanent awareness poster style reference image.'
+)
+ON CONFLICT(business_slug, poster_type) DO UPDATE SET
+  production_reference_image_url = excluded.production_reference_image_url,
+  notes = excluded.notes,
+  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
+
 INSERT INTO daily_poster_packets (
   business_slug,
   poster_type,
@@ -63,7 +79,7 @@ INSERT INTO daily_poster_packets (
   'Create awareness and encourage appointment booking',
   'Local families and adults looking for dental care',
   '["Dr Pooja’s Smile Craft Dental Clinic","7907006842"]',
-  'https://placehold.co/1080x1920/E7F7F6/123333.png?text=Today%27s+Dental+Cleaning+Reference',
+  NULL,
   '[]',
   '["Use the production reference image as the main visual inspiration","Keep the design premium and minimal","Do not make it look like a cheap offer flyer"]',
   'Create a 9:16 premium modern dental clinic poster using the full context on this page. Use the brand colors, logo reference, brand reference board, and today''s production reference image. Include the clinic name and phone number exactly.'

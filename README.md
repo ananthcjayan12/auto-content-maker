@@ -192,7 +192,9 @@ curl -X PUT "https://poster.yourdomain.com/api/business/dr-poojas-smile-craft/br
 
 ## Updating a daily packet
 
-The daily endpoint requires an existing business brand system. Identity comes from the URL, so concise automation payloads do not need to repeat slug, poster type, or date. If `status` is omitted it defaults to `ready`; ready packets require a production reference image.
+The admin dashboard lets you upload one permanent production reference image per poster type, such as one stable `awareness` reference and one stable `offer` reference. Daily packet updates then only need the date-specific copy, campaign goal, CTA, and notes.
+
+The API still accepts `productionReferenceImageUrl` as an optional daily override for special cases. For normal daily automation, leave it out and let the public page use the poster-type reference image.
 
 ```bash
 curl -X PUT "https://poster.yourdomain.com/api/daily-poster/dr-poojas-smile-craft/awareness/2026-06-18" \
@@ -204,9 +206,8 @@ curl -X PUT "https://poster.yourdomain.com/api/daily-poster/dr-poojas-smile-craf
     "cta": "Book your appointment today",
     "campaignGoal": "Create awareness and encourage appointment booking",
     "targetAudience": "Local families and adults looking for dental care",
-    "productionReferenceImageUrl": "https://poster.yourdomain.com/assets/daily/2026-06-18-cleaning-reference.jpg",
     "specialInstructions": [
-      "Use the reference image as main visual inspiration",
+      "Use the awareness poster type reference as main visual inspiration",
       "Keep the design premium and minimal"
     ]
   }'
@@ -221,11 +222,10 @@ Suggested workflow:
 1. Run daily at a fixed time.
 2. Call the business content API.
 3. Fetch today’s campaign details.
-4. Fetch or upload today’s production reference image to a publicly readable URL.
-5. Call the protected daily packet update endpoint.
-6. Verify the returned public page loads.
-7. Verify the production reference image is visible as a normal `<img>`.
-8. Report success or failure.
+4. Call the protected daily packet update endpoint with today’s copy and instructions.
+5. Verify the returned public page loads.
+6. Verify the poster-type production reference image is visible as a normal `<img>`.
+7. Report success or failure.
 
 Treat a `200` API response as the start of verification, not the end: fetch both returned URLs and confirm the resolved date, headline, and image URL.
 

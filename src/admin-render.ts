@@ -3,6 +3,7 @@ import {
   type BusinessBrandSystem,
   type DailyPosterPacket,
   type PosterType,
+  type PosterTypeReference,
 } from "./types";
 
 function escapeHtml(value: unknown): string {
@@ -75,6 +76,7 @@ export function renderLoginPage(
 export function renderDashboard(input: {
   brand: BusinessBrandSystem;
   packet: DailyPosterPacket | null;
+  typeReference: PosterTypeReference | null;
   selectedType: PosterType;
   selectedDate: string;
   publicBaseUrl: string;
@@ -84,6 +86,7 @@ export function renderDashboard(input: {
   const {
     brand,
     packet,
+    typeReference,
     selectedType,
     selectedDate,
     publicBaseUrl,
@@ -117,6 +120,19 @@ export function renderDashboard(input: {
               <div><label for="date">Date</label><input id="date" name="date" type="date" value="${escapeHtml(selectedDate)}" required></div>
             </div>
             <div class="actions"><button type="submit">Load packet</button></div>
+          </form>
+          <h3>Permanent ${escapeHtml(selectedType)} reference image</h3>
+          ${
+            typeReference?.productionReferenceImageUrl
+              ? `<img class="preview" src="${escapeHtml(typeReference.productionReferenceImageUrl)}" alt="Permanent ${escapeHtml(selectedType)} production reference"><p class="url">${escapeHtml(typeReference.productionReferenceImageUrl)}</p>`
+              : `<p class="help">No permanent reference image has been saved for this poster type yet.</p>`
+          }
+          <form method="post" action="/admin/${escapeHtml(brand.businessSlug)}/type-reference" enctype="multipart/form-data">
+            <input type="hidden" name="posterType" value="${escapeHtml(selectedType)}"><input type="hidden" name="date" value="${escapeHtml(selectedDate)}">
+            <input name="productionReferenceImageUrl" type="hidden" value="${escapeHtml(typeReference?.productionReferenceImageUrl)}">
+            <label for="typeReferenceFile">Replace ${escapeHtml(selectedType)} reference image</label><input id="typeReferenceFile" name="typeReferenceFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+            <label>Reference notes</label><textarea name="notes">${escapeHtml(typeReference?.notes)}</textarea>
+            <div class="actions"><button type="submit">Save type reference</button></div>
           </form>
         </section>
 
@@ -171,10 +187,7 @@ export function renderDashboard(input: {
             <label>Campaign goal</label><textarea name="campaignGoal">${escapeHtml(packet?.campaignGoal)}</textarea>
             <label>Target audience</label><textarea name="targetAudience">${escapeHtml(packet?.targetAudience)}</textarea>
             <label>Required text — one item per line</label><textarea name="requiredText">${lines(packet?.requiredText ?? [brand.businessName, brand.phone])}</textarea>
-            <h3>Production reference image</h3>
-            ${packet?.productionReferenceImageUrl ? `<img class="preview" src="${escapeHtml(packet.productionReferenceImageUrl)}" alt="Current production reference"><p class="url">${escapeHtml(packet.productionReferenceImageUrl)}</p>` : ""}
             <input name="productionReferenceImageUrl" type="hidden" value="${escapeHtml(packet?.productionReferenceImageUrl)}">
-            <label for="referenceFile">Upload today’s reference image</label><input id="referenceFile" name="referenceFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
             <label>Additional reference image URLs — one per line</label><textarea name="additionalReferenceImages">${lines(packet?.additionalReferenceImages ?? [])}</textarea>
             <label>Special instructions — one per line</label><textarea name="specialInstructions">${lines(packet?.specialInstructions ?? [])}</textarea>
             <label>Custom ChatGPT image prompt (optional)</label><textarea name="chatgptImagePrompt">${escapeHtml(packet?.chatgptImagePrompt)}</textarea>

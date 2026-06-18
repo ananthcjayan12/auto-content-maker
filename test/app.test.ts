@@ -6,15 +6,21 @@ import type {
   DailyPosterPacket,
   PosterStore,
   PosterType,
+  PosterTypeReference,
 } from "../src/types";
 import { todayInTimezone } from "../src/date";
 
 class MemoryStore implements PosterStore {
   brands = new Map<string, BusinessBrandSystem>();
   packets = new Map<string, DailyPosterPacket>();
+  typeReferences = new Map<string, PosterTypeReference>();
 
   private packetKey(slug: string, type: PosterType, date: string) {
     return `${slug}:${type}:${date}`;
+  }
+
+  private typeReferenceKey(slug: string, type: PosterType) {
+    return `${slug}:${type}`;
   }
 
   async listBrands() {
@@ -30,6 +36,19 @@ class MemoryStore implements PosterStore {
   async upsertBrand(brand: BusinessBrandSystem) {
     const saved = { ...brand, updatedAt: new Date().toISOString() };
     this.brands.set(brand.businessSlug, saved);
+    return saved;
+  }
+
+  async getTypeReference(slug: string, type: PosterType) {
+    return this.typeReferences.get(this.typeReferenceKey(slug, type)) ?? null;
+  }
+
+  async upsertTypeReference(reference: PosterTypeReference) {
+    const saved = { ...reference, updatedAt: new Date().toISOString() };
+    this.typeReferences.set(
+      this.typeReferenceKey(reference.businessSlug, reference.posterType),
+      saved,
+    );
     return saved;
   }
 
@@ -112,6 +131,12 @@ describe("daily poster packet worker", () => {
       `${brand.businessSlug}:awareness:${today}`,
       packet(today),
     );
+    store.typeReferences.set(`${brand.businessSlug}:awareness`, {
+      businessSlug: brand.businessSlug,
+      posterType: "awareness",
+      productionReferenceImageUrl: "https://example.com/type-ref.jpg",
+      notes: "Permanent awareness style reference",
+    });
     env = {
       DB: {} as D1Database,
       TEST_STORE: store,
@@ -184,7 +209,7 @@ describe("daily poster packet worker", () => {
     expect(await response.text()).toContain("Invalid business or admin token");
   });
 
-  it("uploads a daily reference image to R2 through the dashboard", async () => {
+  it("uploads a poster-type reference image to R2 through the dashboard", async () => {
     const put = vi.fn().mockResolvedValue(undefined);
     env.ASSETS = { put } as unknown as R2Bucket;
     const loginResponse = await app.request(
@@ -203,27 +228,58 @@ describe("daily poster packet worker", () => {
     const form = new FormData();
     form.set("posterType", "awareness");
     form.set("date", today);
-    form.set("status", "ready");
-    form.set("headline", "Updated with a real reference");
-    form.set("requiredText", `${brand.businessName}\n${brand.phone}`);
+    form.set("notes", "A permanent awareness poster reference.");
     form.set(
-      "referenceFile",
+      "typeReferenceFile",
       new File(["png"], "reference.png", { type: "image/png" }),
     );
 
     const response = await app.request(
-      `/admin/${brand.businessSlug}/packet`,
+      `/admin/${brand.businessSlug}/type-reference`,
       { method: "POST", headers: { Cookie: cookie }, body: form },
       env,
     );
     expect(response.status).toBe(303);
     expect(put).toHaveBeenCalledOnce();
     expect(
-      (await store.getPacket(brand.businessSlug, "awareness", today))
+      (await store.getTypeReference(brand.businessSlug, "awareness"))
         ?.productionReferenceImageUrl,
     ).toContain(
-      `/assets/businesses/${brand.businessSlug}/daily/${today}/awareness/reference-`,
+      `/assets/businesses/${brand.businessSlug}/types/awareness/reference-`,
     );
+  });
+
+  it("saves ready daily packet content without duplicating a reference image", async () => {
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const form = new FormData();
+    form.set("posterType", "awareness");
+    form.set("date", today);
+    form.set("status", "ready");
+    form.set("headline", "Daily copy only");
+    form.set("requiredText", `${brand.businessName}\n${brand.phone}`);
+
+    const response = await app.request(
+      `/admin/${brand.businessSlug}/packet`,
+      { method: "POST", headers: { Cookie: cookie }, body: form },
+      env,
+    );
+
+    expect(response.status).toBe(303);
+    const saved = await store.getPacket(brand.businessSlug, "awareness", today);
+    expect(saved?.headline).toBe("Daily copy only");
+    expect(saved?.productionReferenceImageUrl).toBeNull();
   });
 
   it("serves R2 assets with an image content type fallback", async () => {
@@ -289,6 +345,7 @@ describe("daily poster packet worker", () => {
     expect(response.status).toBe(200);
     expect(html).toContain(brand.businessName);
     expect(html).toContain("A Cleaner Smile Starts Here");
+    expect(html).toContain("https://example.com/type-ref.jpg");
     expect(html).toContain("<img");
     expect(html).toContain("Final ChatGPT Task Instruction");
     expect(html).toContain("noindex, nofollow");
@@ -303,11 +360,19 @@ describe("daily poster packet worker", () => {
     const body = (await response.json()) as {
       businessBrandSystem: BusinessBrandSystem;
       dailyPosterPacket: DailyPosterPacket;
+      posterTypeReference: PosterTypeReference | null;
+      effectiveProductionReferenceImageUrl: string | null;
       resolvedDate: string;
     };
     expect(response.status).toBe(200);
     expect(body.businessBrandSystem.businessSlug).toBe(brand.businessSlug);
     expect(body.dailyPosterPacket.headline).toBe("A Cleaner Smile Starts Here");
+    expect(body.posterTypeReference?.productionReferenceImageUrl).toBe(
+      "https://example.com/type-ref.jpg",
+    );
+    expect(body.effectiveProductionReferenceImageUrl).toBe(
+      "https://example.com/type-ref.jpg",
+    );
     expect(body.resolvedDate).toBe(today);
   });
 
@@ -375,6 +440,7 @@ describe("daily poster packet worker", () => {
   });
 
   it("shows a warning when the production reference is missing", async () => {
+    store.typeReferences.delete(`${brand.businessSlug}:awareness`);
     store.packets.set(
       `${brand.businessSlug}:awareness:${today}`,
       packet(today, null),
@@ -385,7 +451,7 @@ describe("daily poster packet worker", () => {
       env,
     );
     expect(await response.text()).toContain(
-      "production reference image URL is missing",
+      "Production reference image URL is missing for this poster type",
     );
   });
 });

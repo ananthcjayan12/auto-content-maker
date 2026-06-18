@@ -1,4 +1,8 @@
-import type { BusinessBrandSystem, DailyPosterPacket } from "./types";
+import type {
+  BusinessBrandSystem,
+  DailyPosterPacket,
+  PosterTypeReference,
+} from "./types";
 
 function escapeHtml(value: unknown): string {
   return String(value ?? "")
@@ -29,30 +33,42 @@ function field(label: string, value: string | null): string {
 export function buildFinalInstruction(
   brand: BusinessBrandSystem,
   packet: DailyPosterPacket,
+  typeReference?: PosterTypeReference | null,
 ): string {
   const required = packet.requiredText.length
     ? ` Include the required text exactly: ${packet.requiredText.join(" · ")}.`
     : "";
-  return `Create a 9:16 Instagram story poster for ${brand.businessName} using this full page as context. Follow the brand system, color palette, logo reference, brand reference board, and today’s production reference image.${required} Keep the design modern, clean, premium, and suitable for a dental clinic. Do not create a crowded flyer. If logo or reference image cannot be accessed, report the issue instead of generating.`;
+  const referencePhrase = typeReference?.productionReferenceImageUrl
+    ? `the permanent ${packet.posterType} poster production reference image`
+    : "the production reference image";
+  return `Create a 9:16 Instagram story poster for ${brand.businessName} using this full page as context. Follow the brand system, color palette, logo reference, brand reference board, and ${referencePhrase}.${required} Keep the design modern, clean, premium, and suitable for a dental clinic. Do not create a crowded flyer. If logo or reference image cannot be accessed, report the issue instead of generating.`;
 }
 
 export function renderPosterPage(input: {
   brand: BusinessBrandSystem;
   packet: DailyPosterPacket;
+  typeReference: PosterTypeReference | null;
   resolvedDate: string;
   publicPageUrl: string;
   jsonUrl: string;
 }): string {
-  const { brand, packet, resolvedDate, publicPageUrl, jsonUrl } = input;
-  const finalInstruction = buildFinalInstruction(brand, packet);
+  const { brand, packet, typeReference, resolvedDate, publicPageUrl, jsonUrl } =
+    input;
+  const finalInstruction = buildFinalInstruction(brand, packet, typeReference);
   const logoUrl = absoluteAssetUrl(brand.logoUrl, publicPageUrl);
   const boardUrl = absoluteAssetUrl(
     brand.brandReferenceBoardUrl,
     publicPageUrl,
   );
-  const referenceUrl = packet.productionReferenceImageUrl
-    ? absoluteAssetUrl(packet.productionReferenceImageUrl, publicPageUrl)
+  const effectiveReferenceUrl =
+    typeReference?.productionReferenceImageUrl ??
+    packet.productionReferenceImageUrl;
+  const referenceUrl = effectiveReferenceUrl
+    ? absoluteAssetUrl(effectiveReferenceUrl, publicPageUrl)
     : null;
+  const referenceLabel = typeReference?.productionReferenceImageUrl
+    ? `Permanent ${packet.posterType} poster production reference image`
+    : "Production reference image";
   const colors = Object.entries(brand.colors)
     .map(
       ([name, hex]) => `
@@ -193,13 +209,13 @@ export function renderPosterPage(input: {
 
       <section class="card" aria-labelledby="production-reference">
         <h2 id="production-reference">5. Production Reference Image</h2>
-        <p class="permanent">Use this image as today’s main visual reference.</p>
+        <p class="permanent">Use this image as the main visual reference for ${escapeHtml(packet.posterType)} posters.</p>
         ${
           referenceUrl
-            ? `<img class="media" src="${escapeHtml(referenceUrl)}" alt="Today’s main production reference for ${escapeHtml(packet.headline)}">
+            ? `<img class="media" src="${escapeHtml(referenceUrl)}" alt="${escapeHtml(referenceLabel)} for ${escapeHtml(packet.headline)}">
                <h3>Direct production reference image URL</h3>
                <p class="url"><a href="${escapeHtml(referenceUrl)}">${escapeHtml(referenceUrl)}</a></p>`
-            : `<p class="warning" role="alert">Warning: Today’s production reference image URL is missing. Do not generate the poster until the reference is supplied, or report the issue.</p>`
+            : `<p class="warning" role="alert">Warning: Production reference image URL is missing for this poster type. Do not generate the poster until the reference is supplied, or report the issue.</p>`
         }
         ${
           packet.additionalReferenceImages.length
