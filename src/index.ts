@@ -16,6 +16,7 @@ import {
 import {
   baseUrl,
   defaultScheduledTarget,
+  generatePosterBrief,
   imageUrlToBase64,
   runPosterOrchestrator,
 } from "./orchestrator";
@@ -746,6 +747,51 @@ app.get(
     );
     if (!generated) return jsonError(c, 404, "Generated poster not found.");
     return c.json({ success: true, generatedPoster: generated });
+  },
+);
+
+app.post(
+  "/api/daily-brief/:businessSlug/:posterType/:dateOrToday",
+  async (c) => {
+    const result = await loadPublicContext(
+      c.req.param("businessSlug"),
+      c.req.param("posterType"),
+      c.req.param("dateOrToday"),
+      c.env,
+    );
+    if ("error" in result) {
+      return jsonError(c, result.status, result.error);
+    }
+    const apiKey = c.env.GEMINI_API_KEY?.trim();
+    if (!apiKey) {
+      return jsonError(c, 500, "GEMINI_API_KEY is not configured.");
+    }
+
+    const base = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
+    const contextUrl = `${base}/daily-poster/${result.brand.businessSlug}/${result.posterType}/today`;
+    const contextJsonUrl = `${contextUrl}.json`;
+    const model = c.env.GEMINI_TEXT_MODEL || "gemini-3.5-flash";
+    const brief = await generatePosterBrief({
+      apiKey,
+      model,
+      brand: result.brand,
+      posterType: result.posterType,
+      typeReference: result.typeReference,
+      date: result.resolvedDate,
+      contextJsonUrl,
+    });
+
+    return c.json({
+      success: true,
+      model,
+      businessSlug: result.brand.businessSlug,
+      posterType: result.posterType,
+      date: result.resolvedDate,
+      contextJsonUrl,
+      dailyBriefPrompt: brief.prompt,
+      dailyBrief: brief.brief,
+      rawText: brief.rawText,
+    });
   },
 );
 

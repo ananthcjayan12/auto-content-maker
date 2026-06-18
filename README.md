@@ -55,6 +55,7 @@ Protected APIs:
 
 - `PUT /api/business/:businessSlug/brand-system`
 - `PUT /api/daily-poster/:businessSlug/:posterType/:date` — legacy/optional, not needed for the main stable-context workflow
+- `POST /api/daily-brief/:businessSlug/:posterType/:dateOrToday` — manually generate only today’s speciality/brief
 - `POST /api/orchestrate/:businessSlug/:posterType/:dateOrToday` — manually run the Gemini poster generator
 - `GET /api/generated-poster/:businessSlug/:posterType/:dateOrToday` — inspect stored generation status/metadata
 
@@ -93,7 +94,7 @@ Create `.dev.vars` for local secrets. Configure production variables and secrets
 ```dotenv
 POSTER_ADMIN_TOKEN=use-a-long-random-secret
 GEMINI_API_KEY=
-GEMINI_TEXT_MODEL=gemini-2.5-flash
+GEMINI_TEXT_MODEL=gemini-3.5-flash
 GEMINI_IMAGE_MODEL=gemini-2.5-flash-image
 PUBLIC_BASE_URL=https://poster.yourdomain.com
 BUSINESS_TIMEZONE=Asia/Kolkata
@@ -105,7 +106,7 @@ R2_PUBLIC_BASE_URL=
 
 - `POSTER_ADMIN_TOKEN` is the admin password/token for the dashboard and every `/api/*` route.
 - `GEMINI_API_KEY` is required for automated generation.
-- `GEMINI_TEXT_MODEL` defaults to `gemini-2.5-flash`.
+- `GEMINI_TEXT_MODEL` defaults to `gemini-3.5-flash`.
 - `GEMINI_IMAGE_MODEL` defaults to `gemini-2.5-flash-image`.
 - `PUBLIC_BASE_URL` is used to build canonical public, JSON, and Markdown URLs.
 - `BUSINESS_TIMEZONE` defaults to `Asia/Kolkata`.
@@ -225,7 +226,14 @@ ChatGPT Tasks are no longer required for the main automation. You can still use 
 
 ## Automated Poster Generation
 
-Manual run:
+Manual first-step brief run:
+
+```bash
+curl -X POST "https://poster.yourdomain.com/api/daily-brief/dr-poojas-smile-craft/awareness/today" \
+  -H "Authorization: Bearer $POSTER_ADMIN_TOKEN"
+```
+
+Manual full poster run:
 
 ```bash
 curl -X POST "https://poster.yourdomain.com/api/orchestrate/dr-poojas-smile-craft/awareness/today" \

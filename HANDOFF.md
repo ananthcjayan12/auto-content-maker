@@ -22,8 +22,16 @@ The public HTML page at `/daily-poster/.../today` still exists and still shows i
 New protected routes:
 
 ```text
+POST /api/daily-brief/:businessSlug/:posterType/:dateOrToday
 POST /api/orchestrate/:businessSlug/:posterType/:dateOrToday
 GET /api/generated-poster/:businessSlug/:posterType/:dateOrToday
+```
+
+Manual daily speciality/brief trigger:
+
+```text
+POST https://posters.srshti.co.in/api/daily-brief/dr-poojas-smile-craft/awareness/today
+Authorization: Bearer <POSTER_ADMIN_TOKEN>
 ```
 
 Manual production trigger:
@@ -59,7 +67,7 @@ GEMINI_API_KEY=
 Optional generation variables:
 
 ```dotenv
-GEMINI_TEXT_MODEL=gemini-2.5-flash
+GEMINI_TEXT_MODEL=gemini-3.5-flash
 GEMINI_IMAGE_MODEL=gemini-2.5-flash-image
 DEFAULT_BUSINESS_SLUG=dr-poojas-smile-craft
 DEFAULT_POSTER_TYPE=awareness

@@ -167,7 +167,40 @@ Set your admin token locally for convenience:
 export POSTER_ADMIN_TOKEN="paste-your-production-admin-token"
 ```
 
-Trigger today’s awareness poster:
+First, manually generate only today’s speciality/brief:
+
+```bash
+curl -sS -X POST \
+  "https://posters.srshti.co.in/api/daily-brief/dr-poojas-smile-craft/awareness/today" \
+  -H "Authorization: Bearer $POSTER_ADMIN_TOKEN" | jq
+```
+
+Expected success shape:
+
+```json
+{
+  "success": true,
+  "model": "gemini-3.5-flash",
+  "businessSlug": "dr-poojas-smile-craft",
+  "posterType": "awareness",
+  "date": "YYYY-MM-DD",
+  "contextJsonUrl": "https://posters.srshti.co.in/daily-poster/dr-poojas-smile-craft/awareness/today.json",
+  "dailyBriefPrompt": "...",
+  "dailyBrief": {
+    "angle": "...",
+    "headline": "...",
+    "subheadline": "...",
+    "requiredText": ["...", "..."],
+    "visualDirection": "...",
+    "safetyNotes": "..."
+  },
+  "rawText": "..."
+}
+```
+
+This is the first Gemini call. It decides what is special, relevant, seasonal, or useful today in India/Kerala for the dental clinic poster.
+
+After the brief looks correct, trigger today’s full awareness poster:
 
 ```bash
 curl -sS -X POST \
@@ -195,7 +228,7 @@ Expected success shape:
     "imageUrl": "https://posters.srshti.co.in/assets/businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.png",
     "imageContentType": "image/png",
     "r2Key": "businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.png",
-    "geminiTextModel": "gemini-2.5-flash",
+    "geminiTextModel": "gemini-3.5-flash",
     "geminiImageModel": "gemini-2.5-flash-image",
     "validationErrors": [],
     "failureReason": null
@@ -468,6 +501,7 @@ Use this checklist after a manual run:
 [ ] Logo base64 appears on public page.
 [ ] Brand board base64 appears on public page.
 [ ] Awareness poster reference base64 appears on public page.
+[ ] Manual POST /api/daily-brief returns today’s speciality/brief.
 [ ] Manual POST /api/orchestrate returns success true.
 [ ] generatedPoster.status is ready.
 [ ] generatedPoster.imageUrl is non-empty.

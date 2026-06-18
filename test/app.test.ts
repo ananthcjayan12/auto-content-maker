@@ -648,6 +648,54 @@ describe("daily poster packet worker", () => {
     expect(put).toHaveBeenCalledOnce();
   });
 
+  it("can manually generate the daily brief before making the poster", async () => {
+    env.GEMINI_API_KEY = "gemini-secret";
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      angle: "Monsoon dental care",
+                      headline: "Keep your smile fresh in the rains",
+                    }),
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request(
+      `/api/daily-brief/${brand.businessSlug}/awareness/today`,
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer test-secret" },
+      },
+      env,
+    );
+    const body = (await response.json()) as {
+      model: string;
+      dailyBrief: { angle: string };
+      dailyBriefPrompt: string;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.model).toBe("gemini-3.5-flash");
+    expect(body.dailyBrief.angle).toBe("Monsoon dental care");
+    expect(body.dailyBriefPrompt).toContain(
+      "Check what is special, relevant, seasonal, or useful",
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("returns generated poster status through the protected API", async () => {
     await store.upsertGeneratedPoster({
       businessSlug: brand.businessSlug,
@@ -662,7 +710,7 @@ describe("daily poster packet worker", () => {
       imageUrl: "https://poster.example.com/assets/generated.png",
       imageContentType: "image/png",
       r2Key: "generated.png",
-      geminiTextModel: "gemini-2.5-flash",
+      geminiTextModel: "gemini-3.5-flash",
       geminiImageModel: "gemini-2.5-flash-image",
       geminiJobName: null,
       validationErrors: [],

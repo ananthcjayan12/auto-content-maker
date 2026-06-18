@@ -236,7 +236,43 @@ Visual style: ${JSON.stringify(brand.visualStyle)}
 Default rules: ${brand.defaultPosterRules.join(" | ")}
 Poster reference notes: ${typeReference?.notes ?? "none"}
 
-Check what is special, relevant, seasonal, or useful on ${date} in India/Kerala for a dental clinic. Prefer a practical dental awareness angle if there is no strong public event.`;
+  Check what is special, relevant, seasonal, or useful on ${date} in India/Kerala for a dental clinic. Prefer a practical dental awareness angle if there is no strong public event.`;
+}
+
+export async function generatePosterBrief(input: {
+  apiKey: string;
+  model: string;
+  brand: BusinessBrandSystem;
+  posterType: PosterType;
+  typeReference: PosterTypeReference | null;
+  date: string;
+  contextJsonUrl: string;
+}): Promise<{
+  prompt: string;
+  brief: Record<string, unknown>;
+  rawText: string;
+}> {
+  const prompt = buildBriefPrompt({
+    brand: input.brand,
+    posterType: input.posterType,
+    typeReference: input.typeReference,
+    date: input.date,
+    contextJsonUrl: input.contextJsonUrl,
+  });
+  const response = await callGemini({
+    apiKey: input.apiKey,
+    model: input.model,
+    body: {
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: { responseMimeType: "application/json" },
+    },
+  });
+  const rawText = textParts(response).join("\n").trim();
+  return {
+    prompt,
+    brief: jsonFromModelText(rawText),
+    rawText,
+  };
 }
 
 function buildImagePrompt(input: {
@@ -322,7 +358,7 @@ export async function runPosterOrchestrator(input: {
   const contextUrl = `${base}/daily-poster/${businessSlug}/${posterType}/today`;
   const contextJsonUrl = `${contextUrl}.json`;
   const apiKey = env.GEMINI_API_KEY?.trim();
-  const textModel = env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
+  const textModel = env.GEMINI_TEXT_MODEL || "gemini-3.5-flash";
   const imageModel = env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
 
   const existing = await store.getGeneratedPoster(
@@ -372,29 +408,21 @@ export async function runPosterOrchestrator(input: {
   }
 
   try {
-    const briefPrompt = buildBriefPrompt({
+    const briefResult = await generatePosterBrief({
+      apiKey,
+      model: textModel,
       brand,
       posterType,
       typeReference,
       date,
       contextJsonUrl,
     });
-    const briefResponse = await callGemini({
-      apiKey,
-      model: textModel,
-      body: {
-        contents: [{ role: "user", parts: [{ text: briefPrompt }] }],
-        generationConfig: { responseMimeType: "application/json" },
-      },
-    });
-    const briefText = textParts(briefResponse).join("\n").trim();
-    const brief = jsonFromModelText(briefText);
     const prompt = buildImagePrompt({
       brand,
       posterType,
       typeReference,
       date,
-      brief,
+      brief: briefResult.brief,
       contextUrl,
     });
 
@@ -440,8 +468,8 @@ export async function runPosterOrchestrator(input: {
       return store.upsertGeneratedPoster({
         ...started,
         status: "needs_review",
-        angle: String(brief.angle ?? ""),
-        briefJson: JSON.stringify(brief),
+        angle: String(briefResult.brief.angle ?? ""),
+        briefJson: JSON.stringify(briefResult.brief),
         prompt,
         validationErrors,
         failureReason: validationErrors.join(" "),
@@ -463,8 +491,8 @@ export async function runPosterOrchestrator(input: {
     return store.upsertGeneratedPoster({
       ...started,
       status: "ready",
-      angle: String(brief.angle ?? ""),
-      briefJson: JSON.stringify(brief),
+      angle: String(briefResult.brief.angle ?? ""),
+      briefJson: JSON.stringify(briefResult.brief),
       prompt,
       imageUrl,
       imageContentType: image.mimeType,
