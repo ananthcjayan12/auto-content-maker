@@ -603,10 +603,19 @@ describe("daily poster packet worker", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            output_image: {
-              mime_type: "image/jpeg",
-              data: "/9j/2w==",
-            },
+            status: "completed",
+            steps: [
+              {
+                type: "model_output",
+                content: [
+                  {
+                    type: "image",
+                    mime_type: "image/jpeg",
+                    data: "/9j/2w==",
+                  },
+                ],
+              },
+            ],
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),

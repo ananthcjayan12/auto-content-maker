@@ -213,6 +213,30 @@ function textParts(response: Record<string, unknown>): string[] {
 function imagePart(
   response: Record<string, unknown>,
 ): { mimeType: string; data: string } | null {
+  function imageFromValue(
+    value: unknown,
+  ): { mimeType: string; data: string } | null {
+    if (
+      typeof value === "object" &&
+      value &&
+      "type" in value &&
+      value.type === "image" &&
+      "data" in value &&
+      typeof value.data === "string"
+    ) {
+      return {
+        mimeType:
+          "mime_type" in value && typeof value.mime_type === "string"
+            ? value.mime_type
+            : "mimeType" in value && typeof value.mimeType === "string"
+              ? value.mimeType
+              : "image/jpeg",
+        data: value.data,
+      };
+    }
+    return null;
+  }
+
   if (
     "output_image" in response &&
     typeof response.output_image === "object" &&
@@ -228,6 +252,27 @@ function imagePart(
           : "image/png",
       data: response.output_image.data,
     };
+  }
+
+  const outputs = Array.isArray(response.outputs) ? response.outputs : [];
+  for (const output of outputs) {
+    const image = imageFromValue(output);
+    if (image) return image;
+  }
+
+  const steps = Array.isArray(response.steps) ? response.steps : [];
+  for (const step of steps) {
+    if (
+      typeof step === "object" &&
+      step &&
+      "content" in step &&
+      Array.isArray(step.content)
+    ) {
+      for (const content of step.content) {
+        const image = imageFromValue(content);
+        if (image) return image;
+      }
+    }
   }
 
   const candidates = Array.isArray(response.candidates)
