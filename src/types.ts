@@ -66,6 +66,7 @@ export interface DailyPosterPacket {
 }
 
 export interface PosterStore {
+  listBrands(): Promise<BusinessBrandSystem[]>;
   getBrand(businessSlug: string): Promise<BusinessBrandSystem | null>;
   upsertBrand(brand: BusinessBrandSystem): Promise<BusinessBrandSystem>;
   getPacket(

@@ -103,6 +103,7 @@ function updateWranglerConfig(d1Id) {
 
   database.database_name = d1Name;
   database.database_id = d1Id;
+  config.d1_databases = [database];
   config.r2_buckets = [
     {
       binding: "ASSETS",

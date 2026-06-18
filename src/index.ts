@@ -1,5 +1,12 @@
 import { Hono, type Context } from "hono";
-import { DEFAULT_TIMEZONE, resolveDate } from "./date";
+import { DEFAULT_TIMEZONE, resolveDate, todayInTimezone } from "./date";
+import { renderDashboard, renderLoginPage } from "./admin-render";
+import {
+  clearAdminSession,
+  getAdminBusinessSlug,
+  setAdminSession,
+} from "./admin-session";
+import { isUploadedFile, uploadImage } from "./assets";
 import {
   buildFinalInstruction,
   renderErrorPage,
@@ -27,7 +34,7 @@ app.use("*", async (c, next) => {
   );
   c.header(
     "Content-Security-Policy",
-    "default-src 'none'; img-src 'self' https: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "default-src 'none'; img-src 'self' https: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   );
 });
 
@@ -76,6 +83,39 @@ function tokensMatch(actual: string, expected: string): boolean {
   return mismatch === 0;
 }
 
+function formString(form: FormData, name: string): string {
+  const value = form.get(name);
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function formLines(form: FormData, name: string): string[] {
+  return formString(form, name)
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function sameOrigin(c: Context<{ Bindings: Bindings }>): boolean {
+  const origin = c.req.header("Origin");
+  return !origin || origin === new URL(c.req.url).origin;
+}
+
+async function hasAdminAccess(
+  c: Context<{ Bindings: Bindings }>,
+  businessSlug: string,
+): Promise<boolean> {
+  return (await getAdminBusinessSlug(c)) === businessSlug;
+}
+
+function adminRedirect(
+  c: Context<{ Bindings: Bindings }>,
+  businessSlug: string,
+  params: Record<string, string>,
+) {
+  const search = new URLSearchParams(params);
+  return c.redirect(`/admin/${businessSlug}?${search.toString()}`, 303);
+}
+
 app.use("/api/*", async (c, next) => {
   const expected = c.env.POSTER_ADMIN_TOKEN;
   const authorization = c.req.header("Authorization") ?? "";
@@ -95,15 +135,299 @@ app.use("/api/*", async (c, next) => {
   await next();
 });
 
-app.get("/", (c) =>
-  c.html(
-    renderErrorPage(
-      200,
-      "Daily Poster Packet",
-      "Open /daily-poster/:businessSlug/:posterType/:dateOrToday to view a packet.",
+app.get("/", async (c) => {
+  const store = storeFor(c.env);
+  const currentBusiness = await getAdminBusinessSlug(c);
+  if (currentBusiness && (await store.getBrand(currentBusiness))) {
+    return c.redirect(`/admin/${currentBusiness}`);
+  }
+  return c.html(
+    renderLoginPage(
+      await store.listBrands(),
+      c.req.query("error") || undefined,
     ),
-  ),
-);
+  );
+});
+
+app.post("/admin/login", async (c) => {
+  if (!sameOrigin(c)) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Invalid form origin."),
+      403,
+    );
+  }
+  const form = await c.req.formData();
+  const businessSlug = formString(form, "businessSlug");
+  const token = formString(form, "token");
+  const expected = c.env.POSTER_ADMIN_TOKEN;
+  const store = storeFor(c.env);
+  if (
+    !isValidSlug(businessSlug) ||
+    !(await store.getBrand(businessSlug)) ||
+    !expected ||
+    !tokensMatch(token, expected)
+  ) {
+    return c.html(
+      renderLoginPage(
+        await store.listBrands(),
+        "Invalid business or admin token.",
+      ),
+      401,
+    );
+  }
+  await setAdminSession(c, businessSlug);
+  return c.redirect(`/admin/${businessSlug}`, 303);
+});
+
+app.post("/admin/logout", async (c) => {
+  if (!sameOrigin(c)) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Invalid form origin."),
+      403,
+    );
+  }
+  clearAdminSession(c);
+  return c.redirect("/", 303);
+});
+
+app.get("/admin/:businessSlug", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.redirect("/?error=Please+sign+in+to+open+the+dashboard", 303);
+  }
+  const store = storeFor(c.env);
+  const brand = await store.getBrand(businessSlug);
+  if (!brand) {
+    clearAdminSession(c);
+    return c.redirect("/?error=Business+not+found", 303);
+  }
+  const posterTypeValue = c.req.query("posterType") || "awareness";
+  const posterType = isPosterType(posterTypeValue)
+    ? posterTypeValue
+    : "awareness";
+  const requestedDate = c.req.query("date") || "today";
+  const selectedDate =
+    resolveDate(requestedDate, c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE) ??
+    todayInTimezone(c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE);
+  const packet = await store.getPacket(businessSlug, posterType, selectedDate);
+  return c.html(
+    renderDashboard({
+      brand,
+      packet,
+      selectedType: posterType,
+      selectedDate,
+      publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
+      message: c.req.query("message") || undefined,
+      error: c.req.query("error") || undefined,
+    }),
+  );
+});
+
+app.post("/admin/:businessSlug/brand", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!sameOrigin(c) || !(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  const existing = await store.getBrand(businessSlug);
+  if (!existing) {
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  }
+
+  try {
+    const form = await c.req.formData();
+    const logoFile = form.get("logoFile");
+    const boardFile = form.get("boardFile");
+    const brandInput = {
+      businessName: formString(form, "businessName"),
+      phone: formString(form, "phone"),
+      websiteUrl: formString(form, "websiteUrl") || null,
+      logoUrl: formString(form, "logoUrl"),
+      brandReferenceBoardUrl: formString(form, "brandReferenceBoardUrl"),
+      colors: {
+        primary: formString(form, "primary"),
+        secondary: formString(form, "secondary"),
+        accent: formString(form, "accent"),
+        darkText: formString(form, "darkText"),
+        mutedText: formString(form, "mutedText"),
+      },
+      typography: {
+        headingStyle: formString(form, "headingStyle"),
+        bodyStyle: formString(form, "bodyStyle"),
+        fontMood: formString(form, "fontMood"),
+      },
+      visualStyle: {
+        mood: formString(form, "mood"),
+        layout: formString(form, "layout"),
+        photoStyle: formString(form, "photoStyle"),
+        avoid: formLines(form, "avoid"),
+      },
+      defaultPosterRules: formLines(form, "defaultPosterRules"),
+    };
+    const preliminary = validateBrand(brandInput, businessSlug, existing);
+    if (!preliminary.value) {
+      return adminRedirect(c, businessSlug, {
+        error: preliminary.errors.join(" "),
+      });
+    }
+
+    const publicBase = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
+    if (isUploadedFile(logoFile)) {
+      brandInput.logoUrl = await uploadImage({
+        env: c.env,
+        file: logoFile,
+        keyPrefix: `businesses/${businessSlug}/brand/logo-${Date.now()}`,
+        publicBaseUrl: publicBase,
+      });
+    }
+    if (isUploadedFile(boardFile)) {
+      brandInput.brandReferenceBoardUrl = await uploadImage({
+        env: c.env,
+        file: boardFile,
+        keyPrefix: `businesses/${businessSlug}/brand/reference-board-${Date.now()}`,
+        publicBaseUrl: publicBase,
+      });
+    }
+    const validated = validateBrand(brandInput, businessSlug, existing);
+    if (!validated.value) {
+      return adminRedirect(c, businessSlug, {
+        error: validated.errors.join(" "),
+      });
+    }
+    await store.upsertBrand(validated.value);
+    return adminRedirect(c, businessSlug, {
+      message: "Brand system saved successfully.",
+    });
+  } catch (error) {
+    return adminRedirect(c, businessSlug, {
+      error: error instanceof Error ? error.message : "Brand update failed.",
+    });
+  }
+});
+
+app.post("/admin/:businessSlug/packet", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!sameOrigin(c) || !(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  const brand = await store.getBrand(businessSlug);
+  if (!brand) {
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  }
+
+  let posterType = "awareness";
+  let date = todayInTimezone(c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE);
+  try {
+    const form = await c.req.formData();
+    posterType = formString(form, "posterType");
+    date = formString(form, "date");
+    if (!isPosterType(posterType) || !resolveDate(date, DEFAULT_TIMEZONE)) {
+      return adminRedirect(c, businessSlug, {
+        error: "Invalid poster type or date.",
+      });
+    }
+    const existing = await store.getPacket(businessSlug, posterType, date);
+    const referenceFile = form.get("referenceFile");
+    const packetInput = {
+      status: formString(form, "status"),
+      headline: formString(form, "headline"),
+      subheadline: formString(form, "subheadline") || null,
+      cta: formString(form, "cta") || null,
+      offer: formString(form, "offer") || null,
+      campaignGoal: formString(form, "campaignGoal") || null,
+      targetAudience: formString(form, "targetAudience") || null,
+      requiredText: formLines(form, "requiredText"),
+      productionReferenceImageUrl:
+        formString(form, "productionReferenceImageUrl") || null,
+      additionalReferenceImages: formLines(form, "additionalReferenceImages"),
+      specialInstructions: formLines(form, "specialInstructions"),
+      chatgptImagePrompt: formString(form, "chatgptImagePrompt") || undefined,
+    };
+    if (
+      isUploadedFile(referenceFile) &&
+      !packetInput.productionReferenceImageUrl
+    ) {
+      packetInput.productionReferenceImageUrl =
+        "https://pending.invalid/reference-image";
+    }
+    const preliminary = validatePacket(
+      packetInput,
+      { businessSlug, posterType, date },
+      brand,
+      existing,
+    );
+    if (!preliminary.value) {
+      return adminRedirect(c, businessSlug, {
+        posterType,
+        date,
+        error: preliminary.errors.join(" "),
+      });
+    }
+    if (isUploadedFile(referenceFile)) {
+      packetInput.productionReferenceImageUrl = await uploadImage({
+        env: c.env,
+        file: referenceFile,
+        keyPrefix: `businesses/${businessSlug}/daily/${date}/${posterType}/reference-${Date.now()}`,
+        publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
+      });
+    }
+    const validated = validatePacket(
+      packetInput,
+      { businessSlug, posterType, date },
+      brand,
+      existing,
+    );
+    if (!validated.value) {
+      return adminRedirect(c, businessSlug, {
+        posterType,
+        date,
+        error: validated.errors.join(" "),
+      });
+    }
+    await store.upsertPacket(validated.value);
+    return adminRedirect(c, businessSlug, {
+      posterType,
+      date,
+      message: "Daily poster packet saved successfully.",
+    });
+  } catch (error) {
+    return adminRedirect(c, businessSlug, {
+      posterType,
+      date,
+      error: error instanceof Error ? error.message : "Packet update failed.",
+    });
+  }
+});
+
+app.get("/assets/*", async (c) => {
+  const key = c.req.param("*");
+  if (!key || !c.env.ASSETS) {
+    return c.text("Asset not found.", 404);
+  }
+  const object = await c.env.ASSETS.get(key);
+  if (!object) return c.text("Asset not found.", 404);
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("etag", object.httpEtag);
+  headers.set(
+    "cache-control",
+    headers.get("cache-control") || "public, max-age=31536000, immutable",
+  );
+  return new Response(object.body, { headers });
+});
 
 app.get("/robots.txt", (c) =>
   c.text("User-agent: *\nDisallow: /\n", 200, {

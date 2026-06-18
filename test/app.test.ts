@@ -17,6 +17,12 @@ class MemoryStore implements PosterStore {
     return `${slug}:${type}:${date}`;
   }
 
+  async listBrands() {
+    return [...this.brands.values()].sort((left, right) =>
+      left.businessName.localeCompare(right.businessName),
+    );
+  }
+
   async getBrand(slug: string) {
     return this.brands.get(slug) ?? null;
   }
@@ -119,6 +125,103 @@ describe("daily poster packet worker", () => {
     expect(
       todayInTimezone("Asia/Kolkata", new Date("2026-06-17T20:00:00.000Z")),
     ).toBe("2026-06-18");
+  });
+
+  it("renders the business-select admin login on the homepage", async () => {
+    const response = await app.request("/", {}, env);
+    const html = await response.text();
+    expect(response.status).toBe(200);
+    expect(html).toContain("Poster admin");
+    expect(html).toContain(brand.businessName);
+    expect(html).toContain('name="token"');
+  });
+
+  it("creates a scoped HttpOnly admin session and opens the dashboard", async () => {
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    expect(loginResponse.status).toBe(303);
+    const cookie = loginResponse.headers.get("set-cookie");
+    expect(cookie).toContain("poster_admin_session=");
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("SameSite=Strict");
+
+    const dashboardResponse = await app.request(
+      `/admin/${brand.businessSlug}`,
+      { headers: { Cookie: cookie?.split(";")[0] ?? "" } },
+      env,
+    );
+    const dashboard = await dashboardResponse.text();
+    expect(dashboardResponse.status).toBe(200);
+    expect(dashboard).toContain("Poster admin dashboard");
+    expect(dashboard).toContain("Save brand system");
+    expect(dashboard).toContain("Save daily packet");
+  });
+
+  it("rejects an invalid dashboard token", async () => {
+    const response = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "wrong-secret",
+        }).toString(),
+      },
+      env,
+    );
+    expect(response.status).toBe(401);
+    expect(await response.text()).toContain("Invalid business or admin token");
+  });
+
+  it("uploads a daily reference image to R2 through the dashboard", async () => {
+    const put = vi.fn().mockResolvedValue(undefined);
+    env.ASSETS = { put } as unknown as R2Bucket;
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const form = new FormData();
+    form.set("posterType", "awareness");
+    form.set("date", today);
+    form.set("status", "ready");
+    form.set("headline", "Updated with a real reference");
+    form.set("requiredText", `${brand.businessName}\n${brand.phone}`);
+    form.set("referenceFile", new File(["png"], "reference.png", { type: "image/png" }));
+
+    const response = await app.request(
+      `/admin/${brand.businessSlug}/packet`,
+      { method: "POST", headers: { Cookie: cookie }, body: form },
+      env,
+    );
+    expect(response.status).toBe(303);
+    expect(put).toHaveBeenCalledOnce();
+    expect(
+      (
+        await store.getPacket(brand.businessSlug, "awareness", today)
+      )?.productionReferenceImageUrl,
+    ).toContain(
+      `/assets/businesses/${brand.businessSlug}/daily/${today}/awareness/reference-`,
+    );
   });
 
   it("renders the public page with visible packet context", async () => {

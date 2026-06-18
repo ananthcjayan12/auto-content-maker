@@ -15,10 +15,11 @@
       "database_id": "c4e059bd-13d7-4b26-b903-35154a072989",
       "migrations_dir": "migrations",
     },
+  ],
+  "r2_buckets": [
     {
-      "binding": "daily_poster_packet_db",
-      "database_name": "daily-poster-packet-db",
-      "database_id": "c4e059bd-13d7-4b26-b903-35154a072989",
+      "binding": "ASSETS",
+      "bucket_name": "daily-poster-packet-assets",
     },
   ],
 }

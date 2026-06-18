@@ -108,6 +108,13 @@ function mapPacket(row: PacketRow): DailyPosterPacket {
 export class D1PosterStore implements PosterStore {
   constructor(private readonly db: D1Database) {}
 
+  async listBrands(): Promise<BusinessBrandSystem[]> {
+    const result = await this.db
+      .prepare("SELECT * FROM business_brand_systems ORDER BY business_name")
+      .all<BrandRow>();
+    return (result.results ?? []).map(mapBrand);
+  }
+
   async getBrand(businessSlug: string): Promise<BusinessBrandSystem | null> {
     const row = await this.db
       .prepare(
