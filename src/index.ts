@@ -13,6 +13,12 @@ import {
   renderErrorPage,
   renderPosterPage,
 } from "./render";
+import {
+  baseUrl,
+  defaultScheduledTarget,
+  imageUrlToBase64,
+  runPosterOrchestrator,
+} from "./orchestrator";
 import { D1PosterStore } from "./store";
 import type { Bindings, PosterStore } from "./types";
 import {
@@ -41,79 +47,6 @@ app.use("*", async (c, next) => {
 
 function storeFor(env: Bindings): PosterStore {
   return env.TEST_STORE ?? new D1PosterStore(env.DB);
-}
-
-function baseUrl(requestUrl: string, configured?: string): string {
-  const candidate = configured?.trim();
-  if (candidate) return candidate.replace(/\/+$/, "");
-  return new URL(requestUrl).origin;
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-  let binary = "";
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-  return btoa(binary);
-}
-
-async function imageUrlToBase64(input: {
-  url: string | null;
-  env: Bindings;
-  publicBaseUrl: string;
-}): Promise<{
-  url: string;
-  contentType: string;
-  byteLength: number;
-  base64: string;
-} | null> {
-  const { url, env, publicBaseUrl } = input;
-  if (!url) return null;
-
-  try {
-    const parsed = new URL(url, `${publicBaseUrl}/`);
-    const publicOrigin = new URL(publicBaseUrl).origin;
-    if (
-      parsed.origin === publicOrigin &&
-      parsed.pathname.startsWith("/assets/")
-    ) {
-      if (!env.ASSETS) return null;
-      const key = decodeURIComponent(
-        parsed.pathname.replace(/^\/assets\//, ""),
-      );
-      const object = await env.ASSETS.get(key);
-      if (!object) return null;
-      const headers = new Headers();
-      object.writeHttpMetadata(headers);
-      const contentType =
-        headers.get("content-type") || imageContentTypeForKey(key);
-      const buffer = await object.arrayBuffer();
-      return {
-        url: parsed.toString(),
-        contentType,
-        byteLength: buffer.byteLength,
-        base64: arrayBufferToBase64(buffer),
-      };
-    }
-
-    const response = await fetch(parsed.toString(), {
-      headers: { "User-Agent": "daily-poster-packet-image-inliner/1.0" },
-    });
-    if (!response.ok) return null;
-    const contentType = response.headers.get("content-type") || "";
-    if (!contentType.toLowerCase().startsWith("image/")) return null;
-    const buffer = await response.arrayBuffer();
-    return {
-      url: parsed.toString(),
-      contentType: contentType.split(";")[0] || "application/octet-stream",
-      byteLength: buffer.byteLength,
-      base64: arrayBufferToBase64(buffer),
-    };
-  } catch {
-    return null;
-  }
 }
 
 function jsonError(
@@ -794,6 +727,59 @@ app.put("/api/daily-poster/:businessSlug/:posterType/:date", async (c) => {
   });
 });
 
+app.get(
+  "/api/generated-poster/:businessSlug/:posterType/:dateOrToday",
+  async (c) => {
+    const result = await loadPublicContext(
+      c.req.param("businessSlug"),
+      c.req.param("posterType"),
+      c.req.param("dateOrToday"),
+      c.env,
+    );
+    if ("error" in result) {
+      return jsonError(c, result.status, result.error);
+    }
+    const generated = await storeFor(c.env).getGeneratedPoster(
+      result.brand.businessSlug,
+      result.posterType,
+      result.resolvedDate,
+    );
+    if (!generated) return jsonError(c, 404, "Generated poster not found.");
+    return c.json({ success: true, generatedPoster: generated });
+  },
+);
+
+app.post(
+  "/api/orchestrate/:businessSlug/:posterType/:dateOrToday",
+  async (c) => {
+    const result = await loadPublicContext(
+      c.req.param("businessSlug"),
+      c.req.param("posterType"),
+      c.req.param("dateOrToday"),
+      c.env,
+    );
+    if ("error" in result) {
+      return jsonError(c, result.status, result.error);
+    }
+    const force = c.req.query("force") === "true";
+    const generatedPoster = await runPosterOrchestrator({
+      env: c.env,
+      store: storeFor(c.env),
+      businessSlug: result.brand.businessSlug,
+      posterType: result.posterType,
+      dateOrToday: result.resolvedDate,
+      requestUrl: c.req.url,
+      force,
+    });
+    return c.json({
+      success:
+        generatedPoster.status === "ready" ||
+        generatedPoster.status === "needs_review",
+      generatedPoster,
+    });
+  },
+);
+
 app.notFound((c) => {
   if (c.req.path.startsWith("/api/")) {
     return jsonError(c, 404, "Route not found.");
@@ -819,4 +805,29 @@ app.onError((error, c) => {
   );
 });
 
-export default app;
+async function scheduled(
+  _event: ScheduledEvent,
+  env: Bindings,
+  ctx: ExecutionContext,
+) {
+  const target = defaultScheduledTarget(env);
+  const task = runPosterOrchestrator({
+    env,
+    store: storeFor(env),
+    businessSlug: target.businessSlug,
+    posterType: target.posterType,
+    dateOrToday: "today",
+    requestUrl: `${baseUrl("https://worker.local", env.PUBLIC_BASE_URL)}/__scheduled`,
+  }).then((result) => {
+    if (result.status !== "ready") {
+      console.error("Scheduled poster generation did not finish ready", result);
+    }
+  });
+  ctx.waitUntil(task);
+}
+
+export default {
+  fetch: app.fetch,
+  request: app.request.bind(app),
+  scheduled,
+};

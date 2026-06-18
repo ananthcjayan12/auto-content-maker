@@ -1,0 +1,495 @@
+import { imageContentTypeForKey } from "./assets";
+import { DEFAULT_TIMEZONE, resolveDate, todayInTimezone } from "./date";
+import { buildFinalInstruction } from "./render";
+import type {
+  Bindings,
+  BusinessBrandSystem,
+  GeneratedPoster,
+  PosterStore,
+  PosterType,
+  PosterTypeReference,
+} from "./types";
+
+export interface ImageBase64Reference {
+  url: string;
+  contentType: string;
+  byteLength: number;
+  base64: string;
+}
+
+export function baseUrl(requestUrl: string, configured?: string): string {
+  const candidate = configured?.trim();
+  if (candidate) return candidate.replace(/\/+$/, "");
+  return new URL(requestUrl).origin;
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
+export async function imageUrlToBase64(input: {
+  url: string | null;
+  env: Bindings;
+  publicBaseUrl: string;
+}): Promise<ImageBase64Reference | null> {
+  const { url, env, publicBaseUrl } = input;
+  if (!url) return null;
+
+  try {
+    const parsed = new URL(url, `${publicBaseUrl}/`);
+    const publicOrigin = new URL(publicBaseUrl).origin;
+    if (
+      parsed.origin === publicOrigin &&
+      parsed.pathname.startsWith("/assets/")
+    ) {
+      if (!env.ASSETS) return null;
+      const key = decodeURIComponent(
+        parsed.pathname.replace(/^\/assets\//, ""),
+      );
+      const object = await env.ASSETS.get(key);
+      if (!object) return null;
+      const headers = new Headers();
+      object.writeHttpMetadata(headers);
+      const contentType =
+        headers.get("content-type") || imageContentTypeForKey(key);
+      const buffer = await object.arrayBuffer();
+      return {
+        url: parsed.toString(),
+        contentType,
+        byteLength: buffer.byteLength,
+        base64: arrayBufferToBase64(buffer),
+      };
+    }
+
+    const response = await fetch(parsed.toString(), {
+      headers: { "User-Agent": "daily-poster-orchestrator/1.0" },
+    });
+    if (!response.ok) return null;
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.toLowerCase().startsWith("image/")) return null;
+    const buffer = await response.arrayBuffer();
+    return {
+      url: parsed.toString(),
+      contentType: contentType.split(";")[0] || "application/octet-stream",
+      byteLength: buffer.byteLength,
+      base64: arrayBufferToBase64(buffer),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function geminiEndpoint(model: string): string {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+}
+
+async function callGemini(input: {
+  apiKey: string;
+  model: string;
+  body: unknown;
+}): Promise<Record<string, unknown>> {
+  const response = await fetch(geminiEndpoint(input.model), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": input.apiKey,
+    },
+    body: JSON.stringify(input.body),
+  });
+  const text = await response.text();
+  let payload: unknown = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = { raw: text };
+  }
+  if (!response.ok) {
+    const message =
+      typeof payload === "object" &&
+      payload &&
+      "error" in payload &&
+      typeof payload.error === "object" &&
+      payload.error &&
+      "message" in payload.error
+        ? String(payload.error.message)
+        : `Gemini request failed with HTTP ${response.status}`;
+    throw new Error(message);
+  }
+  return payload as Record<string, unknown>;
+}
+
+function textParts(response: Record<string, unknown>): string[] {
+  const candidates = Array.isArray(response.candidates)
+    ? response.candidates
+    : [];
+  return candidates.flatMap((candidate) => {
+    const content =
+      typeof candidate === "object" && candidate && "content" in candidate
+        ? candidate.content
+        : null;
+    const parts =
+      typeof content === "object" &&
+      content &&
+      "parts" in content &&
+      Array.isArray(content.parts)
+        ? content.parts
+        : [];
+    return parts
+      .map((part: unknown) =>
+        typeof part === "object" &&
+        part &&
+        "text" in part &&
+        typeof part.text === "string"
+          ? part.text
+          : "",
+      )
+      .filter(Boolean);
+  });
+}
+
+function imagePart(
+  response: Record<string, unknown>,
+): { mimeType: string; data: string } | null {
+  const candidates = Array.isArray(response.candidates)
+    ? response.candidates
+    : [];
+  for (const candidate of candidates) {
+    const content =
+      typeof candidate === "object" && candidate && "content" in candidate
+        ? candidate.content
+        : null;
+    const parts =
+      typeof content === "object" &&
+      content &&
+      "parts" in content &&
+      Array.isArray(content.parts)
+        ? content.parts
+        : [];
+    for (const part of parts) {
+      if (
+        typeof part === "object" &&
+        part &&
+        "inlineData" in part &&
+        typeof part.inlineData === "object" &&
+        part.inlineData &&
+        "data" in part.inlineData &&
+        typeof part.inlineData.data === "string"
+      ) {
+        return {
+          mimeType:
+            "mimeType" in part.inlineData &&
+            typeof part.inlineData.mimeType === "string"
+              ? part.inlineData.mimeType
+              : "image/png",
+          data: part.inlineData.data,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function jsonFromModelText(text: string): Record<string, unknown> {
+  const cleaned = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "");
+  try {
+    const parsed = JSON.parse(cleaned);
+    return typeof parsed === "object" && parsed ? parsed : {};
+  } catch {
+    return { angle: text.trim() };
+  }
+}
+
+function buildBriefPrompt(input: {
+  brand: BusinessBrandSystem;
+  posterType: PosterType;
+  typeReference: PosterTypeReference | null;
+  date: string;
+  contextJsonUrl: string;
+}): string {
+  const { brand, posterType, typeReference, date, contextJsonUrl } = input;
+  return `You are planning a single daily Instagram story poster for a dental clinic in Kerala, India.
+
+Return only compact JSON with these keys:
+- angle: the best timely content angle for ${date}
+- headline: short poster headline
+- subheadline: one supporting line
+- requiredText: exact required text array
+- visualDirection: concise design direction
+- safetyNotes: dental/medical claims to avoid
+
+Context JSON URL: ${contextJsonUrl}
+Business: ${brand.businessName}
+Phone: ${brand.phone}
+Poster type: ${posterType}
+Brand colors: ${JSON.stringify(brand.colors)}
+Typography: ${JSON.stringify(brand.typography)}
+Visual style: ${JSON.stringify(brand.visualStyle)}
+Default rules: ${brand.defaultPosterRules.join(" | ")}
+Poster reference notes: ${typeReference?.notes ?? "none"}
+
+Check what is special, relevant, seasonal, or useful on ${date} in India/Kerala for a dental clinic. Prefer a practical dental awareness angle if there is no strong public event.`;
+}
+
+function buildImagePrompt(input: {
+  brand: BusinessBrandSystem;
+  posterType: PosterType;
+  typeReference: PosterTypeReference | null;
+  date: string;
+  brief: Record<string, unknown>;
+  contextUrl: string;
+}): string {
+  const { brand, posterType, typeReference, date, brief, contextUrl } = input;
+  return `Create one complete 9:16 Instagram story poster image.
+
+Business: ${brand.businessName}
+Phone: ${brand.phone}
+Date: ${date}
+Poster type: ${posterType}
+Context page: ${contextUrl}
+Brief JSON: ${JSON.stringify(brief)}
+
+Use the attached logo, brand reference board, and poster-type reference image when available. Preserve the existing logo identity. Use exact brand colors: ${JSON.stringify(brand.colors)}. Typography mood: ${JSON.stringify(brand.typography)}. Visual style: ${JSON.stringify(brand.visualStyle)}.
+
+Required visible text exactly:
+${brand.businessName}
+${brand.phone}
+
+Design constraints:
+- 9:16 vertical Instagram story poster
+- clean, premium, modern dental clinic design
+- readable on mobile
+- high whitespace and strong hierarchy
+- do not make a crowded flyer
+- do not invent a new logo
+- avoid unsupported medical cure claims
+${typeReference?.productionReferenceImageUrl ? "- follow the stable poster reference composition/style" : ""}`;
+}
+
+function imageExtension(contentType: string): string {
+  if (contentType.includes("jpeg")) return "jpg";
+  if (contentType.includes("webp")) return "webp";
+  return "png";
+}
+
+function base64ToArrayBuffer(value: string): ArrayBuffer {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
+}
+
+function validateGeneratedPoster(input: {
+  brand: BusinessBrandSystem;
+  image: { mimeType: string; data: string } | null;
+  prompt: string;
+}): string[] {
+  const errors: string[] = [];
+  if (!input.image?.data) errors.push("Gemini did not return an inline image.");
+  if (!input.prompt.includes(input.brand.businessName)) {
+    errors.push("Prompt does not include the business name.");
+  }
+  if (!input.prompt.includes(input.brand.phone)) {
+    errors.push("Prompt does not include the phone number.");
+  }
+  return errors;
+}
+
+export async function runPosterOrchestrator(input: {
+  env: Bindings;
+  store: PosterStore;
+  businessSlug: string;
+  posterType: PosterType;
+  dateOrToday: string;
+  requestUrl: string;
+  force?: boolean;
+}): Promise<GeneratedPoster> {
+  const { env, store, businessSlug, posterType, dateOrToday, requestUrl } =
+    input;
+  const timezone = env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE;
+  const date = resolveDate(dateOrToday, timezone) ?? todayInTimezone(timezone);
+  const base = baseUrl(requestUrl, env.PUBLIC_BASE_URL);
+  const contextUrl = `${base}/daily-poster/${businessSlug}/${posterType}/today`;
+  const contextJsonUrl = `${contextUrl}.json`;
+  const apiKey = env.GEMINI_API_KEY?.trim();
+  const textModel = env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
+  const imageModel = env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
+
+  const existing = await store.getGeneratedPoster(
+    businessSlug,
+    posterType,
+    date,
+  );
+  if (existing?.status === "ready" && !input.force) return existing;
+
+  const brand = await store.getBrand(businessSlug);
+  if (!brand) throw new Error("Business brand system not found.");
+  const typeReference = await store.getTypeReference(businessSlug, posterType);
+
+  const started = await store.upsertGeneratedPoster({
+    businessSlug,
+    posterType,
+    date,
+    status: "processing",
+    contextUrl,
+    contextJsonUrl,
+    angle: null,
+    briefJson: null,
+    prompt: null,
+    imageUrl: null,
+    imageContentType: null,
+    r2Key: null,
+    geminiTextModel: textModel,
+    geminiImageModel: imageModel,
+    geminiJobName: null,
+    validationErrors: [],
+    failureReason: null,
+  });
+
+  if (!apiKey) {
+    return store.upsertGeneratedPoster({
+      ...started,
+      status: "failed",
+      failureReason: "GEMINI_API_KEY is not configured.",
+    });
+  }
+  if (!env.ASSETS) {
+    return store.upsertGeneratedPoster({
+      ...started,
+      status: "failed",
+      failureReason: "R2 asset storage is not configured.",
+    });
+  }
+
+  try {
+    const briefPrompt = buildBriefPrompt({
+      brand,
+      posterType,
+      typeReference,
+      date,
+      contextJsonUrl,
+    });
+    const briefResponse = await callGemini({
+      apiKey,
+      model: textModel,
+      body: {
+        contents: [{ role: "user", parts: [{ text: briefPrompt }] }],
+        generationConfig: { responseMimeType: "application/json" },
+      },
+    });
+    const briefText = textParts(briefResponse).join("\n").trim();
+    const brief = jsonFromModelText(briefText);
+    const prompt = buildImagePrompt({
+      brand,
+      posterType,
+      typeReference,
+      date,
+      brief,
+      contextUrl,
+    });
+
+    const [logo, board, posterReference] = await Promise.all([
+      imageUrlToBase64({ url: brand.logoUrl, env, publicBaseUrl: base }),
+      imageUrlToBase64({
+        url: brand.brandReferenceBoardUrl,
+        env,
+        publicBaseUrl: base,
+      }),
+      imageUrlToBase64({
+        url: typeReference?.productionReferenceImageUrl ?? null,
+        env,
+        publicBaseUrl: base,
+      }),
+    ]);
+    const imageInputParts: unknown[] = [{ text: prompt }];
+    for (const reference of [logo, board, posterReference]) {
+      if (reference) {
+        imageInputParts.push({
+          inlineData: {
+            mimeType: reference.contentType,
+            data: reference.base64,
+          },
+        });
+      }
+    }
+
+    const imageResponse = await callGemini({
+      apiKey,
+      model: imageModel,
+      body: {
+        contents: [{ role: "user", parts: imageInputParts }],
+        generationConfig: {
+          responseModalities: ["IMAGE"],
+          imageConfig: { aspectRatio: "9:16" },
+        },
+      },
+    });
+    const image = imagePart(imageResponse);
+    const validationErrors = validateGeneratedPoster({ brand, image, prompt });
+    if (validationErrors.length || !image) {
+      return store.upsertGeneratedPoster({
+        ...started,
+        status: "needs_review",
+        angle: String(brief.angle ?? ""),
+        briefJson: JSON.stringify(brief),
+        prompt,
+        validationErrors,
+        failureReason: validationErrors.join(" "),
+      });
+    }
+
+    const extension = imageExtension(image.mimeType);
+    const r2Key = `businesses/${businessSlug}/generated/${posterType}/${date}.${extension}`;
+    await env.ASSETS.put(r2Key, base64ToArrayBuffer(image.data), {
+      httpMetadata: {
+        contentType: image.mimeType,
+        cacheControl: "public, max-age=31536000, immutable",
+      },
+    });
+    const imageUrl = env.R2_PUBLIC_BASE_URL
+      ? `${env.R2_PUBLIC_BASE_URL.replace(/\/+$/, "")}/${r2Key}`
+      : `${base}/assets/${r2Key}`;
+
+    return store.upsertGeneratedPoster({
+      ...started,
+      status: "ready",
+      angle: String(brief.angle ?? ""),
+      briefJson: JSON.stringify(brief),
+      prompt,
+      imageUrl,
+      imageContentType: image.mimeType,
+      r2Key,
+      validationErrors: [],
+      failureReason: null,
+    });
+  } catch (error) {
+    return store.upsertGeneratedPoster({
+      ...started,
+      status: "failed",
+      failureReason:
+        error instanceof Error ? error.message : "Poster orchestration failed.",
+    });
+  }
+}
+
+export function defaultScheduledTarget(env: Bindings): {
+  businessSlug: string;
+  posterType: PosterType;
+} {
+  return {
+    businessSlug: env.DEFAULT_BUSINESS_SLUG || "dr-poojas-smile-craft",
+    posterType: env.DEFAULT_POSTER_TYPE || "awareness",
+  };
+}
+
+export { buildFinalInstruction };

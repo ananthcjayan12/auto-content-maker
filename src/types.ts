@@ -74,6 +74,35 @@ export interface PosterTypeReference {
   updatedAt?: string;
 }
 
+export type GeneratedPosterStatus =
+  | "pending"
+  | "processing"
+  | "ready"
+  | "failed"
+  | "needs_review";
+
+export interface GeneratedPoster {
+  businessSlug: string;
+  posterType: PosterType;
+  date: string;
+  status: GeneratedPosterStatus;
+  contextUrl: string;
+  contextJsonUrl: string;
+  angle: string | null;
+  briefJson: string | null;
+  prompt: string | null;
+  imageUrl: string | null;
+  imageContentType: string | null;
+  r2Key: string | null;
+  geminiTextModel: string | null;
+  geminiImageModel: string | null;
+  geminiJobName: string | null;
+  validationErrors: string[];
+  failureReason: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface PosterStore {
   listBrands(): Promise<BusinessBrandSystem[]>;
   getBrand(businessSlug: string): Promise<BusinessBrandSystem | null>;
@@ -91,11 +120,22 @@ export interface PosterStore {
     date: string,
   ): Promise<DailyPosterPacket | null>;
   upsertPacket(packet: DailyPosterPacket): Promise<DailyPosterPacket>;
+  getGeneratedPoster(
+    businessSlug: string,
+    posterType: PosterType,
+    date: string,
+  ): Promise<GeneratedPoster | null>;
+  upsertGeneratedPoster(poster: GeneratedPoster): Promise<GeneratedPoster>;
 }
 
 export interface Bindings {
   DB: D1Database;
   ASSETS?: R2Bucket;
+  GEMINI_API_KEY?: string;
+  GEMINI_TEXT_MODEL?: string;
+  GEMINI_IMAGE_MODEL?: string;
+  DEFAULT_BUSINESS_SLUG?: string;
+  DEFAULT_POSTER_TYPE?: PosterType;
   POSTER_ADMIN_TOKEN?: string;
   PUBLIC_BASE_URL?: string;
   BUSINESS_TIMEZONE?: string;

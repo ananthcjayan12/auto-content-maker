@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "../src/index";
 import type {
   Bindings,
   BusinessBrandSystem,
   DailyPosterPacket,
+  GeneratedPoster,
   PosterStore,
   PosterType,
   PosterTypeReference,
@@ -14,6 +15,7 @@ class MemoryStore implements PosterStore {
   brands = new Map<string, BusinessBrandSystem>();
   packets = new Map<string, DailyPosterPacket>();
   typeReferences = new Map<string, PosterTypeReference>();
+  generatedPosters = new Map<string, GeneratedPoster>();
 
   private packetKey(slug: string, type: PosterType, date: string) {
     return `${slug}:${type}:${date}`;
@@ -60,6 +62,19 @@ class MemoryStore implements PosterStore {
     const saved = { ...packet, updatedAt: new Date().toISOString() };
     this.packets.set(
       this.packetKey(packet.businessSlug, packet.posterType, packet.date),
+      saved,
+    );
+    return saved;
+  }
+
+  async getGeneratedPoster(slug: string, type: PosterType, date: string) {
+    return this.generatedPosters.get(this.packetKey(slug, type, date)) ?? null;
+  }
+
+  async upsertGeneratedPoster(poster: GeneratedPoster) {
+    const saved = { ...poster, updatedAt: new Date().toISOString() };
+    this.generatedPosters.set(
+      this.packetKey(poster.businessSlug, poster.posterType, poster.date),
       saved,
     );
     return saved;
@@ -144,6 +159,11 @@ describe("daily poster packet worker", () => {
       PUBLIC_BASE_URL: "https://poster.example.com",
       BUSINESS_TIMEZONE: "Asia/Kolkata",
     };
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("resolves today in Asia/Kolkata", () => {
@@ -532,7 +552,153 @@ describe("daily poster packet worker", () => {
     ).toBeNull();
   });
 
+  it("runs the protected Gemini poster orchestrator and stores the image", async () => {
+    store.brands.set(brand.businessSlug, {
+      ...brand,
+      logoUrl: "https://poster.example.com/assets/logo.png",
+      brandReferenceBoardUrl: "https://poster.example.com/assets/board.png",
+    });
+    store.typeReferences.set(`${brand.businessSlug}:awareness`, {
+      businessSlug: brand.businessSlug,
+      posterType: "awareness",
+      productionReferenceImageUrl: "https://poster.example.com/assets/ref.png",
+      notes: "Permanent awareness style reference",
+    });
+    const put = vi.fn().mockResolvedValue(undefined);
+    env.GEMINI_API_KEY = "gemini-secret";
+    env.ASSETS = {
+      get: vi.fn().mockResolvedValue({
+        arrayBuffer: vi
+          .fn()
+          .mockResolvedValue(new Uint8Array([137, 80, 78, 71]).buffer),
+        writeHttpMetadata: (headers: Headers) => {
+          headers.set("content-type", "image/png");
+        },
+      }),
+      put,
+    } as unknown as R2Bucket;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        angle: "Monsoon dental care",
+                        headline: "Protect your smile this season",
+                      }),
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      inlineData: {
+                        mimeType: "image/png",
+                        data: "iVBORw==",
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request(
+      `/api/orchestrate/${brand.businessSlug}/awareness/today`,
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer test-secret" },
+      },
+      env,
+    );
+    const body = (await response.json()) as {
+      success: boolean;
+      generatedPoster: GeneratedPoster;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.generatedPoster.status).toBe("ready");
+    expect(body.generatedPoster.angle).toBe("Monsoon dental care");
+    expect(body.generatedPoster.imageUrl).toBe(
+      `https://poster.example.com/assets/businesses/${brand.businessSlug}/generated/awareness/${today}.png`,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(env.ASSETS.get).toHaveBeenCalledTimes(3);
+    expect(put).toHaveBeenCalledOnce();
+  });
+
+  it("returns generated poster status through the protected API", async () => {
+    await store.upsertGeneratedPoster({
+      businessSlug: brand.businessSlug,
+      posterType: "awareness",
+      date: today,
+      status: "ready",
+      contextUrl: "https://poster.example.com/daily-poster/context",
+      contextJsonUrl: "https://poster.example.com/daily-poster/context.json",
+      angle: "Daily dental awareness",
+      briefJson: "{}",
+      prompt: "Prompt",
+      imageUrl: "https://poster.example.com/assets/generated.png",
+      imageContentType: "image/png",
+      r2Key: "generated.png",
+      geminiTextModel: "gemini-2.5-flash",
+      geminiImageModel: "gemini-2.5-flash-image",
+      geminiJobName: null,
+      validationErrors: [],
+      failureReason: null,
+    });
+
+    const response = await app.request(
+      `/api/generated-poster/${brand.businessSlug}/awareness/today`,
+      { headers: { Authorization: "Bearer test-secret" } },
+      env,
+    );
+    const body = (await response.json()) as {
+      generatedPoster: GeneratedPoster;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.generatedPoster.status).toBe("ready");
+    expect(body.generatedPoster.angle).toBe("Daily dental awareness");
+  });
+
   it("shows a warning when the production reference is missing", async () => {
+    store.brands.set(brand.businessSlug, {
+      ...brand,
+      logoUrl: "https://poster.example.com/assets/logo.png",
+      brandReferenceBoardUrl: "https://poster.example.com/assets/board.png",
+    });
+    env.ASSETS = {
+      get: vi.fn().mockResolvedValue({
+        arrayBuffer: vi
+          .fn()
+          .mockResolvedValue(new Uint8Array([137, 80, 78, 71]).buffer),
+        writeHttpMetadata: (headers: Headers) => {
+          headers.set("content-type", "image/png");
+        },
+      }),
+    } as unknown as R2Bucket;
     store.typeReferences.delete(`${brand.businessSlug}:awareness`);
     const response = await app.request(
       `/daily-poster/${brand.businessSlug}/awareness/today`,

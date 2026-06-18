@@ -26,6 +26,7 @@ env:
   D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
   D1_DATABASE_NAME: ${{ secrets.CLOUDFLARE_D1_DATABASE_NAME || 'daily-poster-packet-db' }}
   POSTER_ADMIN_TOKEN: ${{ secrets.POSTER_ADMIN_TOKEN }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
   PUBLIC_BASE_URL: ${{ secrets.PUBLIC_BASE_URL }}
   BUSINESS_TIMEZONE: ${{ secrets.BUSINESS_TIMEZONE || 'Asia/Kolkata' }}
   R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME || 'daily-poster-packet-assets' }}
@@ -82,7 +83,7 @@ jobs:
         shell: bash
         run: |
           missing=0
-          for variable in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN POSTER_ADMIN_TOKEN PUBLIC_BASE_URL; do
+          for variable in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN POSTER_ADMIN_TOKEN GEMINI_API_KEY PUBLIC_BASE_URL; do
             if [ -z "${!variable}" ]; then
               echo "::error::$variable is not configured in GitHub repository secrets."
               missing=1
@@ -118,16 +119,20 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
 
-      - name: Configure Worker admin token
+      - name: Configure Worker secrets
         shell: bash
         env:
           POSTER_ADMIN_TOKEN: ${{ secrets.POSTER_ADMIN_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          if [ -z "$POSTER_ADMIN_TOKEN" ]; then
-            echo "::error::POSTER_ADMIN_TOKEN is not configured as a GitHub repository secret."
-            exit 1
-          fi
+          for variable in POSTER_ADMIN_TOKEN GEMINI_API_KEY; do
+            if [ -z "${!variable}" ]; then
+              echo "::error::$variable is not configured as a GitHub repository secret."
+              exit 1
+            fi
+          done
           printf '%s' "$POSTER_ADMIN_TOKEN" | npx wrangler secret put POSTER_ADMIN_TOKEN
+          printf '%s' "$GEMINI_API_KEY" | npx wrangler secret put GEMINI_API_KEY
 
       - name: Print deployment result
         run: |

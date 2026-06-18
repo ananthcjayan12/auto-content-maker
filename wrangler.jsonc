@@ -7,6 +7,11 @@
   "vars": {
     "PUBLIC_BASE_URL": "http://localhost:8787",
     "BUSINESS_TIMEZONE": "Asia/Kolkata",
+    "DEFAULT_BUSINESS_SLUG": "dr-poojas-smile-craft",
+    "DEFAULT_POSTER_TYPE": "awareness",
+  },
+  "triggers": {
+    "crons": ["0 3 * * *"],
   },
   "d1_databases": [
     {

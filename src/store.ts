@@ -1,6 +1,8 @@
 import type {
   BusinessBrandSystem,
   DailyPosterPacket,
+  GeneratedPoster,
+  GeneratedPosterStatus,
   PosterStore,
   PosterType,
   PosterTypeReference,
@@ -46,6 +48,28 @@ interface TypeReferenceRow {
   poster_type: PosterType;
   production_reference_image_url: string | null;
   notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface GeneratedPosterRow {
+  business_slug: string;
+  poster_type: PosterType;
+  poster_date: string;
+  status: GeneratedPosterStatus;
+  context_url: string;
+  context_json_url: string;
+  angle: string | null;
+  brief_json: string | null;
+  prompt: string | null;
+  image_url: string | null;
+  image_content_type: string | null;
+  r2_key: string | null;
+  gemini_text_model: string | null;
+  gemini_image_model: string | null;
+  gemini_job_name: string | null;
+  validation_errors_json: string;
+  failure_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -121,6 +145,30 @@ function mapTypeReference(row: TypeReferenceRow): PosterTypeReference {
     posterType: row.poster_type,
     productionReferenceImageUrl: row.production_reference_image_url,
     notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapGeneratedPoster(row: GeneratedPosterRow): GeneratedPoster {
+  return {
+    businessSlug: row.business_slug,
+    posterType: row.poster_type,
+    date: row.poster_date,
+    status: row.status,
+    contextUrl: row.context_url,
+    contextJsonUrl: row.context_json_url,
+    angle: row.angle,
+    briefJson: row.brief_json,
+    prompt: row.prompt,
+    imageUrl: row.image_url,
+    imageContentType: row.image_content_type,
+    r2Key: row.r2_key,
+    geminiTextModel: row.gemini_text_model,
+    geminiImageModel: row.gemini_image_model,
+    geminiJobName: row.gemini_job_name,
+    validationErrors: parseJson(row.validation_errors_json, []),
+    failureReason: row.failure_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -289,6 +337,78 @@ export class D1PosterStore implements PosterStore {
       packet.businessSlug,
       packet.posterType,
       packet.date,
+    ))!;
+  }
+
+  async getGeneratedPoster(
+    businessSlug: string,
+    posterType: PosterType,
+    date: string,
+  ): Promise<GeneratedPoster | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT * FROM generated_posters
+         WHERE business_slug = ? AND poster_type = ? AND poster_date = ?
+         LIMIT 1`,
+      )
+      .bind(businessSlug, posterType, date)
+      .first<GeneratedPosterRow>();
+    return row ? mapGeneratedPoster(row) : null;
+  }
+
+  async upsertGeneratedPoster(
+    poster: GeneratedPoster,
+  ): Promise<GeneratedPoster> {
+    await this.db
+      .prepare(
+        `INSERT INTO generated_posters (
+          business_slug, poster_type, poster_date, status, context_url,
+          context_json_url, angle, brief_json, prompt, image_url,
+          image_content_type, r2_key, gemini_text_model, gemini_image_model,
+          gemini_job_name, validation_errors_json, failure_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(business_slug, poster_type, poster_date) DO UPDATE SET
+          status = excluded.status,
+          context_url = excluded.context_url,
+          context_json_url = excluded.context_json_url,
+          angle = excluded.angle,
+          brief_json = excluded.brief_json,
+          prompt = excluded.prompt,
+          image_url = excluded.image_url,
+          image_content_type = excluded.image_content_type,
+          r2_key = excluded.r2_key,
+          gemini_text_model = excluded.gemini_text_model,
+          gemini_image_model = excluded.gemini_image_model,
+          gemini_job_name = excluded.gemini_job_name,
+          validation_errors_json = excluded.validation_errors_json,
+          failure_reason = excluded.failure_reason,
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+      )
+      .bind(
+        poster.businessSlug,
+        poster.posterType,
+        poster.date,
+        poster.status,
+        poster.contextUrl,
+        poster.contextJsonUrl,
+        poster.angle,
+        poster.briefJson,
+        poster.prompt,
+        poster.imageUrl,
+        poster.imageContentType,
+        poster.r2Key,
+        poster.geminiTextModel,
+        poster.geminiImageModel,
+        poster.geminiJobName,
+        JSON.stringify(poster.validationErrors),
+        poster.failureReason,
+      )
+      .run();
+
+    return (await this.getGeneratedPoster(
+      poster.businessSlug,
+      poster.posterType,
+      poster.date,
     ))!;
   }
 }
