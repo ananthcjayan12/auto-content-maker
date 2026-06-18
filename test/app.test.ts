@@ -351,7 +351,30 @@ describe("daily poster packet worker", () => {
     expect(html).toContain("<img");
     expect(html).toContain("Final ChatGPT Task Instruction");
     expect(html).toContain("First check what is special");
+    expect(html).toContain("Copy Markdown URL");
+    expect(html).toContain("Hex palette for LLM");
     expect(html).toContain("noindex, nofollow");
+  });
+
+  it("returns markdown context with image embeds and hex guidance", async () => {
+    store.packets.clear();
+    const response = await app.request(
+      `/daily-poster/${brand.businessSlug}/awareness/today.md`,
+      {},
+      env,
+    );
+    const markdown = await response.text();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/markdown");
+    expect(markdown).toContain(
+      `# Poster Design Context: ${brand.businessName}`,
+    );
+    expect(markdown).toContain("![Dr Pooja’s Smile Craft Dental Clinic logo]");
+    expect(markdown).toContain("## Brand Hex Palette");
+    expect(markdown).toContain("- Primary / main teal: #0EA5A4");
+    expect(markdown).toContain("## Image Color Guidance In Hex");
+    expect(markdown).toContain("https://example.com/type-ref.jpg");
+    expect(markdown).toContain("Final ChatGPT Task Instruction");
   });
 
   it("returns stable brand context JSON without requiring a daily packet", async () => {
@@ -368,6 +391,8 @@ describe("daily poster packet worker", () => {
       posterReferenceImageUrl: string | null;
       resolvedDate: string;
       finalChatGPTInstruction: string;
+      brandHexPalette: BusinessBrandSystem["colors"];
+      imageColorGuidanceHex: BusinessBrandSystem["colors"];
     };
     expect(response.status).toBe(200);
     expect(body.businessBrandSystem.businessSlug).toBe(brand.businessSlug);
@@ -379,6 +404,8 @@ describe("daily poster packet worker", () => {
       "https://example.com/type-ref.jpg",
     );
     expect(body.resolvedDate).toBe(today);
+    expect(body.brandHexPalette.primary).toBe("#0EA5A4");
+    expect(body.imageColorGuidanceHex.darkText).toBe("#123333");
     expect(body.finalChatGPTInstruction).toContain("check what is special");
   });
 

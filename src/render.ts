@@ -30,6 +30,21 @@ function field(label: string, value: string | null): string {
   return `<div class="field"><dt>${escapeHtml(label)}</dt><dd>${value ? escapeHtml(value) : '<span class="muted">Not specified</span>'}</dd></div>`;
 }
 
+function markdownList(items: string[], empty = "None specified"): string {
+  if (!items.length) return empty;
+  return items.map((item) => `- ${item}`).join("\n");
+}
+
+function markdownColorPalette(brand: BusinessBrandSystem): string {
+  return [
+    `- Primary / main teal: ${brand.colors.primary}`,
+    `- Secondary / pale aqua or cream background: ${brand.colors.secondary}`,
+    `- Accent / clean white: ${brand.colors.accent}`,
+    `- Dark text / headline navy: ${brand.colors.darkText}`,
+    `- Muted supporting text: ${brand.colors.mutedText}`,
+  ].join("\n");
+}
+
 export function buildFinalInstruction(
   brand: BusinessBrandSystem,
   posterType: PosterType,
@@ -42,14 +57,137 @@ export function buildFinalInstruction(
   return `Create one 9:16 Instagram story poster for ${brand.businessName}. Use this public page as the stable brand and design-system context. First check what is special, relevant, or useful today for the selected poster type: ${posterType}. If today has a festival, awareness day, clinic milestone, seasonal context, offer angle, review/social proof idea, or locally relevant topic, use that as the poster theme. Follow the brand colors, typography mood, logo reference, brand reference board, and ${referencePhrase}. Include the clinic name exactly: ${brand.businessName}. Include the phone number exactly: ${brand.phone}. Keep the design modern, clean, premium, readable on mobile, and suitable for a dental clinic. Do not create a crowded flyer or invent a new logo. If the logo, brand board, or reference image cannot be accessed, report the issue instead of generating.`;
 }
 
+export function renderPosterMarkdown(input: {
+  brand: BusinessBrandSystem;
+  posterType: PosterType;
+  typeReference: PosterTypeReference | null;
+  publicPageUrl: string;
+  jsonUrl: string;
+  markdownUrl: string;
+}): string {
+  const {
+    brand,
+    posterType,
+    typeReference,
+    publicPageUrl,
+    jsonUrl,
+    markdownUrl,
+  } = input;
+  const finalInstruction = buildFinalInstruction(
+    brand,
+    posterType,
+    typeReference,
+  );
+  const logoUrl = absoluteAssetUrl(brand.logoUrl, publicPageUrl);
+  const boardUrl = absoluteAssetUrl(
+    brand.brandReferenceBoardUrl,
+    publicPageUrl,
+  );
+  const referenceUrl = typeReference?.productionReferenceImageUrl
+    ? absoluteAssetUrl(typeReference.productionReferenceImageUrl, publicPageUrl)
+    : null;
+
+  return `# Poster Design Context: ${brand.businessName}
+
+This Markdown file is optimized for ChatGPT Scheduled Tasks. It contains the stable brand/design system and permanent visual references. There is no daily packet to upload.
+
+- Public HTML URL: ${publicPageUrl}
+- Public JSON URL: ${jsonUrl}
+- Public Markdown URL: ${markdownUrl}
+- Poster type: ${posterType}
+
+## Business
+
+- Business name: ${brand.businessName}
+- Phone: ${brand.phone}
+- Website: ${brand.websiteUrl ?? "Not specified"}
+
+## Logo Reference
+
+Use the logo as a reference. Do not invent or redesign a new logo.
+
+![${brand.businessName} logo](${logoUrl})
+
+Direct logo URL: ${logoUrl}
+
+## Brand Reference Board
+
+Use this as the permanent brand style reference.
+
+![${brand.businessName} brand reference board](${boardUrl})
+
+Direct brand reference board URL: ${boardUrl}
+
+## Brand Hex Palette
+
+Use these exact hex values as the design color system. These are written as text so the model does not have to infer colors only from images.
+
+${markdownColorPalette(brand)}
+
+## Image Color Guidance In Hex
+
+When interpreting the logo, brand board, and poster reference image, anchor the generated poster around these hex colors:
+
+${markdownColorPalette(brand)}
+
+Prefer mostly ${brand.colors.accent} or very light ${brand.colors.secondary} backgrounds, strong ${brand.colors.darkText} headline text, and ${brand.colors.primary} accents.
+
+## Typography
+
+- Heading style: ${brand.typography.headingStyle}
+- Body style: ${brand.typography.bodyStyle}
+- Font mood: ${brand.typography.fontMood}
+
+## Visual Style
+
+- Mood: ${brand.visualStyle.mood}
+- Layout: ${brand.visualStyle.layout}
+- Photo style: ${brand.visualStyle.photoStyle}
+
+## Default Poster Rules
+
+${markdownList(brand.defaultPosterRules)}
+
+## Avoid
+
+${markdownList(brand.visualStyle.avoid)}
+
+## Permanent Poster-Type Reference Image
+
+Use this as the stable visual reference for ${posterType} posters. It does not need to change daily.
+
+${
+  referenceUrl
+    ? `![Permanent ${posterType} poster reference image](${referenceUrl})
+
+Direct poster reference image URL: ${referenceUrl}
+
+Reference notes: ${typeReference?.notes ?? "None specified"}`
+    : "Warning: No poster-type reference image is saved yet. Use the logo and brand board, and report that the poster-type reference image is missing if needed."
+}
+
+## Final ChatGPT Task Instruction
+
+${finalInstruction}
+`;
+}
+
 export function renderPosterPage(input: {
   brand: BusinessBrandSystem;
   posterType: PosterType;
   typeReference: PosterTypeReference | null;
   publicPageUrl: string;
   jsonUrl: string;
+  markdownUrl: string;
 }): string {
-  const { brand, posterType, typeReference, publicPageUrl, jsonUrl } = input;
+  const {
+    brand,
+    posterType,
+    typeReference,
+    publicPageUrl,
+    jsonUrl,
+    markdownUrl,
+  } = input;
   const finalInstruction = buildFinalInstruction(
     brand,
     posterType,
@@ -133,6 +271,7 @@ export function renderPosterPage(input: {
       <div class="actions" aria-label="Copy context links and prompt">
         <button type="button" data-copy="${escapeHtml(publicPageUrl)}">Copy public page URL</button>
         <button type="button" data-copy="${escapeHtml(jsonUrl)}">Copy JSON URL</button>
+        <button type="button" data-copy="${escapeHtml(markdownUrl)}">Copy Markdown URL</button>
         <button type="button" data-copy="${escapeHtml(finalInstruction)}">Copy final ChatGPT task prompt</button>
         <noscript><a class="button" href="${escapeHtml(jsonUrl)}">Open JSON endpoint</a></noscript>
       </div>
@@ -163,6 +302,8 @@ export function renderPosterPage(input: {
         <h2 id="brand-system">3. Brand System</h2>
         <h3>Color palette</h3>
         <div class="palette">${colors}</div>
+        <h3>Hex palette for LLM</h3>
+        <p class="url">${escapeHtml(markdownColorPalette(brand))}</p>
         <h3>Typography</h3>
         <dl>
           ${field("Heading style", brand.typography.headingStyle)}

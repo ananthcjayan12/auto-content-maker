@@ -31,10 +31,11 @@ Public:
 
 - `GET /daily-poster/:businessSlug/:posterType/:dateOrToday`
 - `GET /daily-poster/:businessSlug/:posterType/:dateOrToday.json`
+- `GET /daily-poster/:businessSlug/:posterType/:dateOrToday.md`
 - `GET /robots.txt`
 - `GET /health`
 
-The `dateOrToday` segment is kept for compatibility with existing Scheduled Task URLs. The page itself is stable and does not require a dated packet.
+The `dateOrToday` segment is kept for compatibility with existing Scheduled Task URLs. The page itself is stable and does not require a dated packet. Use the `.md` route for ChatGPT Scheduled Tasks when possible; it includes Markdown image embeds and explicit hex color guidance.
 
 Admin UI:
 
@@ -67,6 +68,12 @@ Then open:
 http://localhost:8787/daily-poster/dr-poojas-smile-craft/awareness/today
 ```
 
+Markdown version:
+
+```text
+http://localhost:8787/daily-poster/dr-poojas-smile-craft/awareness/today.md
+```
+
 Useful checks:
 
 ```bash
@@ -88,7 +95,7 @@ R2_PUBLIC_BASE_URL=
 ```
 
 - `POSTER_ADMIN_TOKEN` is the admin password/token for the dashboard and every `/api/*` route.
-- `PUBLIC_BASE_URL` is used to build canonical public and JSON URLs.
+- `PUBLIC_BASE_URL` is used to build canonical public, JSON, and Markdown URLs.
 - `BUSINESS_TIMEZONE` defaults to `Asia/Kolkata`.
 - `R2_PUBLIC_BASE_URL` is optional. Uploaded assets can also be served through this Worker at `/assets/...`.
 
@@ -149,6 +156,12 @@ For Dr Pooja’s Smile Craft:
 https://poster.yourdomain.com/daily-poster/dr-poojas-smile-craft/awareness/today
 ```
 
+Markdown task URL:
+
+```text
+https://poster.yourdomain.com/daily-poster/dr-poojas-smile-craft/awareness/today.md
+```
+
 ## Updating the brand system by API
 
 ```bash
@@ -192,9 +205,9 @@ curl -X PUT "https://poster.yourdomain.com/api/business/dr-poojas-smile-craft/br
 Suggested scheduled task prompt:
 
 > Every day at 9 AM, open this URL:  
-> https://poster.yourdomain.com/daily-poster/dr-poojas-smile-craft/awareness/today
+> https://poster.yourdomain.com/daily-poster/dr-poojas-smile-craft/awareness/today.md
 >
-> Read the full poster design context page. Inspect the logo, brand reference board, brand colors, typography, and poster-type reference image. Check what is special or relevant today — festival, awareness day, clinic milestone, seasonal context, offer angle, review/social-proof idea, or local topic. Generate one 9:16 Instagram story poster using the brand system and today’s best content angle. Include the clinic name and phone number exactly. Keep the design modern, clean, premium, readable on mobile, and suitable for a dental clinic. If the reference image, brand board, or logo cannot be accessed, tell me instead of generating.
+> Read the full Markdown poster design context. Inspect the embedded logo, brand reference board, and poster-type reference image. Use the written hex palette and image color guidance as the exact color system. Check what is special or relevant today — festival, awareness day, clinic milestone, seasonal context, offer angle, review/social-proof idea, or local topic. Generate one 9:16 Instagram story poster using the brand system and today’s best content angle. Include the clinic name and phone number exactly. Keep the design modern, clean, premium, readable on mobile, and suitable for a dental clinic. If the reference image, brand board, or logo cannot be accessed, tell me instead of generating.
 
 ## Codex automation
 

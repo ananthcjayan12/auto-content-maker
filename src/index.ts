@@ -11,6 +11,7 @@ import { applyDrPoojaSmileCraftPreset } from "./brand-presets";
 import {
   buildFinalInstruction,
   renderErrorPage,
+  renderPosterMarkdown,
   renderPosterPage,
 } from "./render";
 import { D1PosterStore } from "./store";
@@ -543,7 +544,12 @@ async function loadPublicContext(
 app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
   const rawDate = c.req.param("dateOrToday");
   const wantsJson = rawDate.endsWith(".json");
-  const dateOrToday = wantsJson ? rawDate.slice(0, -5) : rawDate;
+  const wantsMarkdown = rawDate.endsWith(".md");
+  const dateOrToday = wantsJson
+    ? rawDate.slice(0, -5)
+    : wantsMarkdown
+      ? rawDate.slice(0, -3)
+      : rawDate;
   const result = await loadPublicContext(
     c.req.param("businessSlug"),
     c.req.param("posterType"),
@@ -564,6 +570,9 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
 
   const base = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
   const explicitPath = `/daily-poster/${result.brand.businessSlug}/${result.posterType}/today`;
+  const publicPageUrl = `${base}${explicitPath}`;
+  const jsonUrl = `${publicPageUrl}.json`;
+  const markdownUrl = `${publicPageUrl}.md`;
   c.header("X-Robots-Tag", "noindex, nofollow");
   c.header("Cache-Control", "public, max-age=300");
   if (wantsJson) {
@@ -571,10 +580,14 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
       businessBrandSystem: result.brand,
       posterType: result.posterType,
       resolvedDate: result.resolvedDate,
-      publicPageUrl: `${base}${explicitPath}`,
+      publicPageUrl,
+      jsonUrl,
+      markdownUrl,
       posterTypeReference: result.typeReference,
       posterReferenceImageUrl:
         result.typeReference?.productionReferenceImageUrl ?? null,
+      brandHexPalette: result.brand.colors,
+      imageColorGuidanceHex: result.brand.colors,
       finalChatGPTInstruction: buildFinalInstruction(
         result.brand,
         result.posterType,
@@ -582,13 +595,28 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
       ),
     });
   }
+  if (wantsMarkdown) {
+    return c.text(
+      renderPosterMarkdown({
+        brand: result.brand,
+        posterType: result.posterType,
+        typeReference: result.typeReference,
+        publicPageUrl,
+        jsonUrl,
+        markdownUrl,
+      }),
+      200,
+      { "Content-Type": "text/markdown; charset=utf-8" },
+    );
+  }
   return c.html(
     renderPosterPage({
       brand: result.brand,
       posterType: result.posterType,
       typeReference: result.typeReference,
-      publicPageUrl: `${base}${explicitPath}`,
-      jsonUrl: `${base}${explicitPath}.json`,
+      publicPageUrl,
+      jsonUrl,
+      markdownUrl,
     }),
   );
 });
