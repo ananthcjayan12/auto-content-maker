@@ -193,12 +193,10 @@ app.get("/admin/:businessSlug", async (c) => {
   const selectedDate =
     resolveDate(requestedDate, c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE) ??
     todayInTimezone(c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE);
-  const packet = await store.getPacket(businessSlug, posterType, selectedDate);
   const typeReference = await store.getTypeReference(businessSlug, posterType);
   return c.html(
     renderDashboard({
       brand,
-      packet,
       typeReference,
       selectedType: posterType,
       selectedDate,
@@ -502,7 +500,7 @@ app.get("/health", (c) =>
   }),
 );
 
-async function loadPublicPacket(
+async function loadPublicContext(
   businessSlug: string,
   posterTypeValue: string,
   dateOrToday: string,
@@ -510,7 +508,7 @@ async function loadPublicPacket(
 ): Promise<
   | {
       brand: Awaited<ReturnType<PosterStore["getBrand"]>> & {};
-      packet: Awaited<ReturnType<PosterStore["getPacket"]>> & {};
+      posterType: Parameters<PosterStore["getTypeReference"]>[1];
       typeReference: Awaited<ReturnType<PosterStore["getTypeReference"]>>;
       resolvedDate: string;
     }
@@ -535,29 +533,18 @@ async function loadPublicPacket(
   if (!brand) {
     return { error: "Business brand system not found.", status: 404 as const };
   }
-  const packet = await store.getPacket(
-    businessSlug,
-    posterTypeValue,
-    resolvedDate,
-  );
-  if (!packet) {
-    return {
-      error: `Daily poster packet not found for ${resolvedDate}.`,
-      status: 404 as const,
-    };
-  }
   const typeReference = await store.getTypeReference(
     businessSlug,
     posterTypeValue,
   );
-  return { brand, packet, typeReference, resolvedDate };
+  return { brand, posterType: posterTypeValue, typeReference, resolvedDate };
 }
 
 app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
   const rawDate = c.req.param("dateOrToday");
   const wantsJson = rawDate.endsWith(".json");
   const dateOrToday = wantsJson ? rawDate.slice(0, -5) : rawDate;
-  const result = await loadPublicPacket(
+  const result = await loadPublicContext(
     c.req.param("businessSlug"),
     c.req.param("posterType"),
     dateOrToday,
@@ -566,28 +553,31 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
   if ("error" in result) {
     if (wantsJson) return jsonError(c, result.status, result.error);
     return c.html(
-      renderErrorPage(result.status, "Poster packet unavailable", result.error),
+      renderErrorPage(
+        result.status,
+        "Poster context unavailable",
+        result.error,
+      ),
       result.status,
     );
   }
 
   const base = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
-  const explicitPath = `/daily-poster/${result.brand.businessSlug}/${result.packet.posterType}/${result.resolvedDate}`;
+  const explicitPath = `/daily-poster/${result.brand.businessSlug}/${result.posterType}/today`;
   c.header("X-Robots-Tag", "noindex, nofollow");
-  c.header("Cache-Control", "public, max-age=60");
+  c.header("Cache-Control", "public, max-age=300");
   if (wantsJson) {
     return c.json({
       businessBrandSystem: result.brand,
-      dailyPosterPacket: result.packet,
+      posterType: result.posterType,
       resolvedDate: result.resolvedDate,
       publicPageUrl: `${base}${explicitPath}`,
       posterTypeReference: result.typeReference,
-      effectiveProductionReferenceImageUrl:
-        result.typeReference?.productionReferenceImageUrl ??
-        result.packet.productionReferenceImageUrl,
+      posterReferenceImageUrl:
+        result.typeReference?.productionReferenceImageUrl ?? null,
       finalChatGPTInstruction: buildFinalInstruction(
         result.brand,
-        result.packet,
+        result.posterType,
         result.typeReference,
       ),
     });
@@ -595,9 +585,8 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
   return c.html(
     renderPosterPage({
       brand: result.brand,
-      packet: result.packet,
+      posterType: result.posterType,
       typeReference: result.typeReference,
-      resolvedDate: result.resolvedDate,
       publicPageUrl: `${base}${explicitPath}`,
       jsonUrl: `${base}${explicitPath}.json`,
     }),
@@ -664,11 +653,18 @@ app.put("/api/daily-poster/:businessSlug/:posterType/:date", async (c) => {
     posterTypeValue,
     resolvedDate,
   );
+  const typeReference = await store.getTypeReference(
+    businessSlug,
+    posterTypeValue,
+  );
   const validated = validatePacket(
     body.value,
     { businessSlug, posterType: posterTypeValue, date: resolvedDate },
     brand,
     existing,
+    {
+      requireProductionReference: !typeReference?.productionReferenceImageUrl,
+    },
   );
   if (!validated.value) {
     return jsonError(

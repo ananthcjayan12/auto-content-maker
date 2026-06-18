@@ -1,6 +1,6 @@
 import type {
   BusinessBrandSystem,
-  DailyPosterPacket,
+  PosterType,
   PosterTypeReference,
 } from "./types";
 
@@ -32,43 +32,37 @@ function field(label: string, value: string | null): string {
 
 export function buildFinalInstruction(
   brand: BusinessBrandSystem,
-  packet: DailyPosterPacket,
+  posterType: PosterType,
   typeReference?: PosterTypeReference | null,
 ): string {
-  const required = packet.requiredText.length
-    ? ` Include the required text exactly: ${packet.requiredText.join(" · ")}.`
-    : "";
   const referencePhrase = typeReference?.productionReferenceImageUrl
-    ? `the permanent ${packet.posterType} poster production reference image`
-    : "the production reference image";
-  return `Create a 9:16 Instagram story poster for ${brand.businessName} using this full page as context. Follow the brand system, color palette, logo reference, brand reference board, and ${referencePhrase}.${required} Keep the design modern, clean, premium, and suitable for a dental clinic. Do not create a crowded flyer. If logo or reference image cannot be accessed, report the issue instead of generating.`;
+    ? `the permanent ${posterType} poster reference image`
+    : "the poster reference image if it is available";
+
+  return `Create one 9:16 Instagram story poster for ${brand.businessName}. Use this public page as the stable brand and design-system context. First check what is special, relevant, or useful today for the selected poster type: ${posterType}. If today has a festival, awareness day, clinic milestone, seasonal context, offer angle, review/social proof idea, or locally relevant topic, use that as the poster theme. Follow the brand colors, typography mood, logo reference, brand reference board, and ${referencePhrase}. Include the clinic name exactly: ${brand.businessName}. Include the phone number exactly: ${brand.phone}. Keep the design modern, clean, premium, readable on mobile, and suitable for a dental clinic. Do not create a crowded flyer or invent a new logo. If the logo, brand board, or reference image cannot be accessed, report the issue instead of generating.`;
 }
 
 export function renderPosterPage(input: {
   brand: BusinessBrandSystem;
-  packet: DailyPosterPacket;
+  posterType: PosterType;
   typeReference: PosterTypeReference | null;
-  resolvedDate: string;
   publicPageUrl: string;
   jsonUrl: string;
 }): string {
-  const { brand, packet, typeReference, resolvedDate, publicPageUrl, jsonUrl } =
-    input;
-  const finalInstruction = buildFinalInstruction(brand, packet, typeReference);
+  const { brand, posterType, typeReference, publicPageUrl, jsonUrl } = input;
+  const finalInstruction = buildFinalInstruction(
+    brand,
+    posterType,
+    typeReference,
+  );
   const logoUrl = absoluteAssetUrl(brand.logoUrl, publicPageUrl);
   const boardUrl = absoluteAssetUrl(
     brand.brandReferenceBoardUrl,
     publicPageUrl,
   );
-  const effectiveReferenceUrl =
-    typeReference?.productionReferenceImageUrl ??
-    packet.productionReferenceImageUrl;
-  const referenceUrl = effectiveReferenceUrl
-    ? absoluteAssetUrl(effectiveReferenceUrl, publicPageUrl)
+  const referenceUrl = typeReference?.productionReferenceImageUrl
+    ? absoluteAssetUrl(typeReference.productionReferenceImageUrl, publicPageUrl)
     : null;
-  const referenceLabel = typeReference?.productionReferenceImageUrl
-    ? `Permanent ${packet.posterType} poster production reference image`
-    : "Production reference image";
   const colors = Object.entries(brand.colors)
     .map(
       ([name, hex]) => `
@@ -85,7 +79,7 @@ export function renderPosterPage(input: {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <title>Daily Poster Packet — ${escapeHtml(brand.businessName)}</title>
+  <title>Poster Design Context — ${escapeHtml(brand.businessName)}</title>
   <style>
     :root { --teal: ${escapeHtml(brand.colors.primary)}; --ink: ${escapeHtml(brand.colors.darkText)}; --muted: ${escapeHtml(brand.colors.mutedText)}; --cream: ${escapeHtml(brand.colors.secondary)}; --line: #dce8e7; --soft: #f5fbfa; }
     * { box-sizing: border-box; }
@@ -101,7 +95,6 @@ export function renderPosterPage(input: {
     h3 { margin: 24px 0 8px; font-size: 1rem; }
     .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
     .pill { padding: 7px 12px; background: var(--soft); border: 1px solid var(--line); border-radius: 999px; font-size: .9rem; }
-    .status { background: #dff7ed; color: #166747; font-weight: 800; }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
     button, .button { appearance: none; border: 0; border-radius: 10px; padding: 10px 14px; background: var(--ink); color: white; font: inherit; font-weight: 700; cursor: pointer; text-decoration: none; }
     button:hover, .button:hover { background: #087c7b; }
@@ -131,17 +124,16 @@ export function renderPosterPage(input: {
 <body>
   <main class="shell">
     <header class="hero">
-      <p class="eyebrow">Daily Poster Packet</p>
+      <p class="eyebrow">Poster Design Context</p>
       <h1>${escapeHtml(brand.businessName)}</h1>
       <div class="meta">
-        <span class="pill">Poster type: <strong>${escapeHtml(packet.posterType)}</strong></span>
-        <span class="pill">Resolved date: <strong>${escapeHtml(resolvedDate)}</strong></span>
-        <span class="pill status">Status: ${escapeHtml(packet.status)}</span>
+        <span class="pill">Poster type: <strong>${escapeHtml(posterType)}</strong></span>
+        <span class="pill">Stable daily task URL</span>
       </div>
-      <div class="actions" aria-label="Copy packet links and prompt">
+      <div class="actions" aria-label="Copy context links and prompt">
         <button type="button" data-copy="${escapeHtml(publicPageUrl)}">Copy public page URL</button>
         <button type="button" data-copy="${escapeHtml(jsonUrl)}">Copy JSON URL</button>
-        <button type="button" data-copy="${escapeHtml(finalInstruction)}">Copy final ChatGPT image prompt</button>
+        <button type="button" data-copy="${escapeHtml(finalInstruction)}">Copy final ChatGPT task prompt</button>
         <noscript><a class="button" href="${escapeHtml(jsonUrl)}">Open JSON endpoint</a></noscript>
       </div>
     </header>
@@ -161,7 +153,7 @@ export function renderPosterPage(input: {
 
       <section class="card" aria-labelledby="brand-board">
         <h2 id="brand-board">2. Brand Reference Board</h2>
-        <p class="permanent">Use this as permanent brand style reference.</p>
+        <p class="permanent">Use this as the permanent brand style reference.</p>
         <img class="media" src="${escapeHtml(boardUrl)}" alt="${escapeHtml(brand.businessName)} permanent brand reference board">
         <h3>Direct brand reference board URL</h3>
         <p class="url"><a href="${escapeHtml(boardUrl)}">${escapeHtml(boardUrl)}</a></p>
@@ -189,48 +181,26 @@ export function renderPosterPage(input: {
         ${list(brand.visualStyle.avoid)}
       </section>
 
-      <section class="card" aria-labelledby="poster-content">
-        <h2 id="poster-content">4. Today’s Poster Content</h2>
-        <dl>
-          ${field("Headline", packet.headline)}
-          ${field("Subheadline", packet.subheadline)}
-          ${field("CTA", packet.cta)}
-          ${field("Offer", packet.offer)}
-          ${field("Campaign goal", packet.campaignGoal)}
-          ${field("Target audience", packet.targetAudience)}
-        </dl>
-        <h3>Required text — include exactly</h3>
-        ${list(packet.requiredText)}
-        <h3>Special instructions</h3>
-        ${list(packet.specialInstructions)}
-        <h3>Packet image prompt</h3>
-        <p class="url">${escapeHtml(packet.chatgptImagePrompt)}</p>
-      </section>
-
-      <section class="card" aria-labelledby="production-reference">
-        <h2 id="production-reference">5. Production Reference Image</h2>
-        <p class="permanent">Use this image as the main visual reference for ${escapeHtml(packet.posterType)} posters.</p>
+      <section class="card wide" aria-labelledby="poster-reference">
+        <h2 id="poster-reference">4. Poster Type Reference Image</h2>
+        <p class="permanent">Use this as the stable visual reference for ${escapeHtml(posterType)} posters. It does not need to change daily.</p>
         ${
           referenceUrl
-            ? `<img class="media" src="${escapeHtml(referenceUrl)}" alt="${escapeHtml(referenceLabel)} for ${escapeHtml(packet.headline)}">
-               <h3>Direct production reference image URL</h3>
-               <p class="url"><a href="${escapeHtml(referenceUrl)}">${escapeHtml(referenceUrl)}</a></p>`
-            : `<p class="warning" role="alert">Warning: Production reference image URL is missing for this poster type. Do not generate the poster until the reference is supplied, or report the issue.</p>`
-        }
-        ${
-          packet.additionalReferenceImages.length
-            ? `<h3>Additional reference image URLs</h3>${list(packet.additionalReferenceImages)}`
-            : ""
+            ? `<img class="media" src="${escapeHtml(referenceUrl)}" alt="Permanent ${escapeHtml(posterType)} poster reference image">
+               <h3>Direct poster reference image URL</h3>
+               <p class="url"><a href="${escapeHtml(referenceUrl)}">${escapeHtml(referenceUrl)}</a></p>
+               ${typeReference?.notes ? `<h3>Reference notes</h3><p>${escapeHtml(typeReference.notes)}</p>` : ""}`
+            : `<p class="warning" role="alert">Warning: No poster-type reference image is saved yet. ChatGPT can still use the logo and brand board, but the visual reference section is missing.</p>`
         }
       </section>
 
       <section class="card wide" aria-labelledby="final-instruction">
-        <h2 id="final-instruction">6. Final ChatGPT Task Instruction</h2>
+        <h2 id="final-instruction">5. Final ChatGPT Task Instruction</h2>
         <p>Use this instruction after reading and inspecting every section and image on this page.</p>
         <pre class="instruction">${escapeHtml(finalInstruction)}</pre>
       </section>
     </div>
-    <footer>Public read-only context page · No sensitive information should be stored here.</footer>
+    <footer>Public read-only brand context page · No sensitive information should be stored here.</footer>
   </main>
   <script>
     document.querySelectorAll('[data-copy]').forEach(function (button) {

@@ -1,7 +1,6 @@
 import {
   POSTER_TYPES,
   type BusinessBrandSystem,
-  type DailyPosterPacket,
   type PosterType,
   type PosterTypeReference,
 } from "./types";
@@ -56,7 +55,7 @@ export function renderLoginPage(
     `<main class="login"><section class="card">
       <p class="eyebrow">Daily Poster Packet</p>
       <h1>Poster admin</h1>
-      <p class="help">Choose a business and enter the admin token to manage its brand system, assets, and daily poster packet.</p>
+      <p class="help">Choose a business and enter the admin token to manage its stable brand system, logo, and poster reference images.</p>
       ${error ? `<p class="message error" role="alert">${escapeHtml(error)}</p>` : ""}
       ${
         brands.length
@@ -75,7 +74,6 @@ export function renderLoginPage(
 
 export function renderDashboard(input: {
   brand: BusinessBrandSystem;
-  packet: DailyPosterPacket | null;
   typeReference: PosterTypeReference | null;
   selectedType: PosterType;
   selectedDate: string;
@@ -83,17 +81,9 @@ export function renderDashboard(input: {
   message?: string;
   error?: string;
 }): string {
-  const {
-    brand,
-    packet,
-    typeReference,
-    selectedType,
-    selectedDate,
-    publicBaseUrl,
-    message,
-    error,
-  } = input;
-  const publicUrl = `${publicBaseUrl}/daily-poster/${brand.businessSlug}/${selectedType}/${selectedDate}`;
+  const { brand, typeReference, selectedType, publicBaseUrl, message, error } =
+    input;
+  const publicUrl = `${publicBaseUrl}/daily-poster/${brand.businessSlug}/${selectedType}/today`;
   const typeOptions = POSTER_TYPES.map(
     (type) =>
       `<option value="${type}"${selected(type, selectedType)}>${type}</option>`,
@@ -105,7 +95,7 @@ export function renderDashboard(input: {
       <header class="top">
         <div><p class="eyebrow">Poster admin dashboard</p><h1>${escapeHtml(brand.businessName)}</h1></div>
         <div class="actions">
-          <a class="button secondary" href="${escapeHtml(publicUrl)}" target="_blank" rel="noopener">View public packet</a>
+          <a class="button secondary" href="${escapeHtml(publicUrl)}" target="_blank" rel="noopener">View public context</a>
           <form method="post" action="/admin/logout"><button class="danger" type="submit">Log out</button></form>
         </div>
       </header>
@@ -113,13 +103,10 @@ export function renderDashboard(input: {
       ${error ? `<p class="message error" role="alert">${escapeHtml(error)}</p>` : ""}
       <div class="grid">
         <section class="card wide">
-          <h2>Packet selection</h2><p class="help">Choose which daily packet to view or edit.</p>
+          <h2>Public task context</h2><p class="help">Choose a poster type and upload its stable visual reference. The same public URL can be used by ChatGPT Tasks every day.</p>
           <form method="get" action="/admin/${escapeHtml(brand.businessSlug)}">
-            <div class="fields">
-              <div><label for="posterType">Poster type</label><select id="posterType" name="posterType">${typeOptions}</select></div>
-              <div><label for="date">Date</label><input id="date" name="date" type="date" value="${escapeHtml(selectedDate)}" required></div>
-            </div>
-            <div class="actions"><button type="submit">Load packet</button></div>
+            <label for="posterType">Poster type</label><select id="posterType" name="posterType">${typeOptions}</select>
+            <div class="actions"><button type="submit">Load context</button><a class="button secondary" href="${escapeHtml(publicUrl)}" target="_blank" rel="noopener">Open stable URL</a></div>
           </form>
           <h3>Permanent ${escapeHtml(selectedType)} reference image</h3>
           ${
@@ -128,7 +115,7 @@ export function renderDashboard(input: {
               : `<p class="help">No permanent reference image has been saved for this poster type yet.</p>`
           }
           <form method="post" action="/admin/${escapeHtml(brand.businessSlug)}/type-reference" enctype="multipart/form-data">
-            <input type="hidden" name="posterType" value="${escapeHtml(selectedType)}"><input type="hidden" name="date" value="${escapeHtml(selectedDate)}">
+            <input type="hidden" name="posterType" value="${escapeHtml(selectedType)}">
             <input name="productionReferenceImageUrl" type="hidden" value="${escapeHtml(typeReference?.productionReferenceImageUrl)}">
             <label for="typeReferenceFile">Replace ${escapeHtml(selectedType)} reference image</label><input id="typeReferenceFile" name="typeReferenceFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
             <label>Reference notes</label><textarea name="notes">${escapeHtml(typeReference?.notes)}</textarea>
@@ -173,26 +160,12 @@ export function renderDashboard(input: {
         </section>
 
         <section class="card">
-          <h2>Daily poster packet</h2><p class="help">${packet ? "Editing the saved packet." : "No packet exists yet; publishing this form will create it."}</p>
-          <form method="post" action="/admin/${escapeHtml(brand.businessSlug)}/packet" enctype="multipart/form-data">
-            <input type="hidden" name="posterType" value="${escapeHtml(selectedType)}"><input type="hidden" name="date" value="${escapeHtml(selectedDate)}">
-            <div class="fields">
-              <div><label for="packetStatus">Status</label><select id="packetStatus" name="status"><option value="draft"${selected("draft", packet?.status ?? "draft")}>draft</option><option value="ready"${selected("ready", packet?.status ?? "draft")}>ready</option></select></div>
-              <div><label>Date</label><input value="${escapeHtml(selectedDate)}" disabled></div>
-            </div>
-            <label>Headline</label><input name="headline" value="${escapeHtml(packet?.headline)}" required>
-            <label>Subheadline</label><input name="subheadline" value="${escapeHtml(packet?.subheadline)}">
-            <label>CTA</label><input name="cta" value="${escapeHtml(packet?.cta)}">
-            <label>Offer</label><input name="offer" value="${escapeHtml(packet?.offer)}">
-            <label>Campaign goal</label><textarea name="campaignGoal">${escapeHtml(packet?.campaignGoal)}</textarea>
-            <label>Target audience</label><textarea name="targetAudience">${escapeHtml(packet?.targetAudience)}</textarea>
-            <label>Required text — one item per line</label><textarea name="requiredText">${lines(packet?.requiredText ?? [brand.businessName, brand.phone])}</textarea>
-            <input name="productionReferenceImageUrl" type="hidden" value="${escapeHtml(packet?.productionReferenceImageUrl)}">
-            <label>Additional reference image URLs — one per line</label><textarea name="additionalReferenceImages">${lines(packet?.additionalReferenceImages ?? [])}</textarea>
-            <label>Special instructions — one per line</label><textarea name="specialInstructions">${lines(packet?.specialInstructions ?? [])}</textarea>
-            <label>Custom ChatGPT image prompt (optional)</label><textarea name="chatgptImagePrompt">${escapeHtml(packet?.chatgptImagePrompt)}</textarea>
-            <div class="actions"><button type="submit">Save daily packet</button></div>
-          </form>
+          <h2>How daily generation works now</h2>
+          <p class="help">No daily packet upload is required. ChatGPT Tasks should open the stable public URL, inspect the brand system and references, then decide the day’s poster angle from today’s date and context.</p>
+          <h3>Stable task URL</h3>
+          <p class="url">${escapeHtml(publicUrl)}</p>
+          <h3>Recommended task instruction</h3>
+          <p class="url">Every day, open the stable URL. Read the logo, brand board, colors, typography, and poster-type reference image. Check what is special today and generate one premium 9:16 poster for ${escapeHtml(brand.businessName)}. Include ${escapeHtml(brand.phone)} exactly.</p>
         </section>
       </div>
     </main>`,

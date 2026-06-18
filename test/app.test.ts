@@ -189,7 +189,8 @@ describe("daily poster packet worker", () => {
     expect(dashboardResponse.status).toBe(200);
     expect(dashboard).toContain("Poster admin dashboard");
     expect(dashboard).toContain("Save brand system");
-    expect(dashboard).toContain("Save daily packet");
+    expect(dashboard).toContain("Save type reference");
+    expect(dashboard).toContain("How daily generation works now");
   });
 
   it("rejects an invalid dashboard token", async () => {
@@ -335,7 +336,7 @@ describe("daily poster packet worker", () => {
     );
   });
 
-  it("renders the public page with visible packet context", async () => {
+  it("renders the public page with stable brand context only", async () => {
     const response = await app.request(
       `/daily-poster/${brand.businessSlug}/awareness/today`,
       {},
@@ -344,14 +345,17 @@ describe("daily poster packet worker", () => {
     const html = await response.text();
     expect(response.status).toBe(200);
     expect(html).toContain(brand.businessName);
-    expect(html).toContain("A Cleaner Smile Starts Here");
+    expect(html).toContain("Poster Design Context");
+    expect(html).not.toContain("Today’s Poster Content");
     expect(html).toContain("https://example.com/type-ref.jpg");
     expect(html).toContain("<img");
     expect(html).toContain("Final ChatGPT Task Instruction");
+    expect(html).toContain("First check what is special");
     expect(html).toContain("noindex, nofollow");
   });
 
-  it("returns combined brand and packet JSON", async () => {
+  it("returns stable brand context JSON without requiring a daily packet", async () => {
+    store.packets.clear();
     const response = await app.request(
       `/daily-poster/${brand.businessSlug}/awareness/today.json`,
       {},
@@ -359,21 +363,23 @@ describe("daily poster packet worker", () => {
     );
     const body = (await response.json()) as {
       businessBrandSystem: BusinessBrandSystem;
-      dailyPosterPacket: DailyPosterPacket;
+      posterType: PosterType;
       posterTypeReference: PosterTypeReference | null;
-      effectiveProductionReferenceImageUrl: string | null;
+      posterReferenceImageUrl: string | null;
       resolvedDate: string;
+      finalChatGPTInstruction: string;
     };
     expect(response.status).toBe(200);
     expect(body.businessBrandSystem.businessSlug).toBe(brand.businessSlug);
-    expect(body.dailyPosterPacket.headline).toBe("A Cleaner Smile Starts Here");
+    expect(body.posterType).toBe("awareness");
     expect(body.posterTypeReference?.productionReferenceImageUrl).toBe(
       "https://example.com/type-ref.jpg",
     );
-    expect(body.effectiveProductionReferenceImageUrl).toBe(
+    expect(body.posterReferenceImageUrl).toBe(
       "https://example.com/type-ref.jpg",
     );
     expect(body.resolvedDate).toBe(today);
+    expect(body.finalChatGPTInstruction).toContain("check what is special");
   });
 
   it("rejects a protected update without a token", async () => {
@@ -417,6 +423,62 @@ describe("daily poster packet worker", () => {
     ).toBe("Updated headline");
   });
 
+  it("accepts a ready API daily update without a daily image when type reference exists", async () => {
+    store.packets.set(
+      `${brand.businessSlug}:awareness:${today}`,
+      packet(today, null),
+    );
+    const response = await app.request(
+      `/api/daily-poster/${brand.businessSlug}/awareness/${today}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer test-secret",
+        },
+        body: JSON.stringify({
+          headline: "API copy with stable type reference",
+          status: "ready",
+        }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    const saved = await store.getPacket(brand.businessSlug, "awareness", today);
+    expect(saved?.headline).toBe("API copy with stable type reference");
+    expect(saved?.productionReferenceImageUrl).toBeNull();
+  });
+
+  it("rejects a ready API daily update without any reference image", async () => {
+    store.typeReferences.delete(`${brand.businessSlug}:awareness`);
+    store.packets.set(
+      `${brand.businessSlug}:awareness:${today}`,
+      packet(today, null),
+    );
+    const response = await app.request(
+      `/api/daily-poster/${brand.businessSlug}/awareness/${today}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer test-secret",
+        },
+        body: JSON.stringify({
+          headline: "Missing reference",
+          status: "ready",
+        }),
+      },
+      env,
+    );
+    const body = (await response.json()) as { details: string[] };
+
+    expect(response.status).toBe(400);
+    expect(body.details.join(" ")).toContain(
+      "productionReferenceImageUrl is required",
+    );
+  });
+
   it("allows an update to explicitly clear optional content", async () => {
     const existing = packet(today);
     existing.offer = "Old offer";
@@ -441,17 +503,13 @@ describe("daily poster packet worker", () => {
 
   it("shows a warning when the production reference is missing", async () => {
     store.typeReferences.delete(`${brand.businessSlug}:awareness`);
-    store.packets.set(
-      `${brand.businessSlug}:awareness:${today}`,
-      packet(today, null),
-    );
     const response = await app.request(
       `/daily-poster/${brand.businessSlug}/awareness/today`,
       {},
       env,
     );
     expect(await response.text()).toContain(
-      "Production reference image URL is missing for this poster type",
+      "No poster-type reference image is saved yet",
     );
   });
 });
