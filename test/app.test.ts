@@ -411,6 +411,64 @@ describe("daily poster packet worker", () => {
     expect(env.ASSETS.get).toHaveBeenCalledTimes(3);
   });
 
+  it("returns JSON with embedded base64 image data", async () => {
+    store.brands.set(brand.businessSlug, {
+      ...brand,
+      logoUrl: "https://poster.example.com/assets/logo.png",
+      brandReferenceBoardUrl: "https://poster.example.com/assets/board.png",
+    });
+    store.typeReferences.set(`${brand.businessSlug}:awareness`, {
+      businessSlug: brand.businessSlug,
+      posterType: "awareness",
+      productionReferenceImageUrl: "https://poster.example.com/assets/ref.png",
+      notes: "Permanent awareness style reference",
+    });
+    env.ASSETS = {
+      get: vi.fn().mockResolvedValue({
+        arrayBuffer: vi
+          .fn()
+          .mockResolvedValue(new Uint8Array([137, 80, 78, 71]).buffer),
+        writeHttpMetadata: (headers: Headers) => {
+          headers.set("content-type", "image/png");
+        },
+      }),
+    } as unknown as R2Bucket;
+
+    const response = await app.request(
+      `/daily-poster/${brand.businessSlug}/awareness/today.images.json`,
+      {},
+      env,
+    );
+    const body = (await response.json()) as {
+      format: string;
+      imageDataUris: {
+        logo: string;
+        brandReferenceBoard: string;
+        posterReference: string;
+      };
+      imageBase64: {
+        logo: string;
+        brandReferenceBoard: string;
+        posterReference: string;
+      };
+      imagesJsonUrl: string;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.format).toBe("daily-poster-context-with-base64-images");
+    expect(body.imageDataUris.logo).toContain("data:image/png;base64,");
+    expect(body.imageDataUris.brandReferenceBoard).toContain(
+      "data:image/png;base64,",
+    );
+    expect(body.imageDataUris.posterReference).toContain(
+      "data:image/png;base64,",
+    );
+    expect(body.imageBase64.logo).toBe("iVBORw==");
+    expect(body.imagesJsonUrl).toBe(
+      `https://poster.example.com/daily-poster/${brand.businessSlug}/awareness/today.images.json`,
+    );
+  });
+
   it("returns stable brand context JSON without requiring a daily packet", async () => {
     store.packets.clear();
     const response = await app.request(
@@ -429,6 +487,7 @@ describe("daily poster packet worker", () => {
       imageColorGuidanceHex: BusinessBrandSystem["colors"];
       textUrl: string;
       inlineHtmlUrl: string;
+      imagesJsonUrl: string;
     };
     expect(response.status).toBe(200);
     expect(body.businessBrandSystem.businessSlug).toBe(brand.businessSlug);
@@ -445,6 +504,9 @@ describe("daily poster packet worker", () => {
     );
     expect(body.inlineHtmlUrl).toBe(
       `https://poster.example.com/daily-poster/${brand.businessSlug}/awareness/today.inline.html`,
+    );
+    expect(body.imagesJsonUrl).toBe(
+      `https://poster.example.com/daily-poster/${brand.businessSlug}/awareness/today.images.json`,
     );
     expect(body.brandHexPalette.primary).toBe("#0EA5A4");
     expect(body.imageColorGuidanceHex.darkText).toBe("#123333");
