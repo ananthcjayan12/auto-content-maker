@@ -95,11 +95,6 @@ function formLines(form: FormData, name: string): string[] {
     .filter(Boolean);
 }
 
-function sameOrigin(c: Context<{ Bindings: Bindings }>): boolean {
-  const origin = c.req.header("Origin");
-  return !origin || origin === new URL(c.req.url).origin;
-}
-
 async function hasAdminAccess(
   c: Context<{ Bindings: Bindings }>,
   businessSlug: string,
@@ -150,12 +145,6 @@ app.get("/", async (c) => {
 });
 
 app.post("/admin/login", async (c) => {
-  if (!sameOrigin(c)) {
-    return c.html(
-      renderErrorPage(403, "Forbidden", "Invalid form origin."),
-      403,
-    );
-  }
   const form = await c.req.formData();
   const businessSlug = formString(form, "businessSlug");
   const token = formString(form, "token");
@@ -180,12 +169,6 @@ app.post("/admin/login", async (c) => {
 });
 
 app.post("/admin/logout", async (c) => {
-  if (!sameOrigin(c)) {
-    return c.html(
-      renderErrorPage(403, "Forbidden", "Invalid form origin."),
-      403,
-    );
-  }
   clearAdminSession(c);
   return c.redirect("/", 303);
 });
@@ -225,7 +208,7 @@ app.get("/admin/:businessSlug", async (c) => {
 
 app.post("/admin/:businessSlug/brand", async (c) => {
   const businessSlug = c.req.param("businessSlug");
-  if (!sameOrigin(c) || !(await hasAdminAccess(c, businessSlug))) {
+  if (!(await hasAdminAccess(c, businessSlug))) {
     return c.html(
       renderErrorPage(403, "Forbidden", "Admin session required."),
       403,
@@ -313,7 +296,7 @@ app.post("/admin/:businessSlug/brand", async (c) => {
 
 app.post("/admin/:businessSlug/packet", async (c) => {
   const businessSlug = c.req.param("businessSlug");
-  if (!sameOrigin(c) || !(await hasAdminAccess(c, businessSlug))) {
+  if (!(await hasAdminAccess(c, businessSlug))) {
     return c.html(
       renderErrorPage(403, "Forbidden", "Admin session required."),
       403,
