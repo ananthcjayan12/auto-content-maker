@@ -78,6 +78,7 @@ export interface PosterStore {
 
 export interface Bindings {
   DB: D1Database;
+  ASSETS?: R2Bucket;
   POSTER_ADMIN_TOKEN?: string;
   PUBLIC_BASE_URL?: string;
   BUSINESS_TIMEZONE?: string;

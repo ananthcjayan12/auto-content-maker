@@ -108,13 +108,13 @@ npm run db:seed:remote
 1. Create the D1 database with `npx wrangler d1 create daily-poster-packet-db`.
 2. Replace the placeholder `database_id` in `wrangler.jsonc`.
 3. Apply remote migrations and optionally seed.
-4. Add the admin secret:
+4. Add the admin secret when deploying manually:
 
    ```bash
    npx wrangler secret put POSTER_ADMIN_TOKEN
    ```
 
-5. Set `PUBLIC_BASE_URL` and `BUSINESS_TIMEZONE` under Worker variables or in the production Wrangler environment.
+5. Set `PUBLIC_BASE_URL`, `BUSINESS_TIMEZONE`, and optional R2 values under Worker variables or in the production Wrangler environment.
 6. Deploy:
 
    ```bash
@@ -122,6 +122,34 @@ npm run db:seed:remote
    ```
 
 For R2, create a bucket, expose assets through a public custom domain, and save direct image URLs in the API payloads. The Worker does not proxy or hide image assets, because ChatGPT Tasks must be able to fetch them directly.
+
+### GitHub Actions deployment
+
+The repository includes [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). A push to `main` or `master` runs formatting, type checks, and tests; applies production D1 migrations; configures the Worker admin secret; and deploys the Worker. The Worker serves both the public HTML pages and protected APIs, so a separate Cloudflare Pages deployment is not required.
+
+For GitHub Actions deployment, all deployment configuration is read from GitHub repository **secrets**:
+
+- `CLOUDFLARE_API_TOKEN` — Cloudflare API token with Workers Scripts edit and D1 edit permissions
+- `CLOUDFLARE_ACCOUNT_ID` — Cloudflare account ID
+- `POSTER_ADMIN_TOKEN` — long random bearer token for protected update APIs
+- `PUBLIC_BASE_URL` — production origin, for example `https://poster.yourdomain.com`
+- `BUSINESS_TIMEZONE` — optional; defaults to `Asia/Kolkata`
+- `CLOUDFLARE_D1_DATABASE_ID` — optional existing D1 ID; the workflow discovers or creates the database when omitted
+- `CLOUDFLARE_D1_DATABASE_NAME` — optional; defaults to `daily-poster-packet-db`
+- `R2_BUCKET_NAME` — optional; defaults to `daily-poster-packet-assets` and is created when missing
+- `R2_PUBLIC_BASE_URL` — optional public R2/custom-domain origin
+
+Add them under **GitHub repository → Settings → Secrets and variables → Actions → Secrets → New repository secret**. GitHub Variables are not required by this workflow.
+
+The workflow runs `npm run cloudflare:ensure-resources`. It checks the Cloudflare account for the configured D1 database and R2 bucket, creates missing resources, discovers the D1 UUID, and updates `wrangler.jsonc` only inside the ephemeral GitHub runner. You may therefore keep `replace-with-your-d1-database-id` in source control.
+
+Production seed data is deliberately not applied on every deployment because that could overwrite current poster content. To seed a new database, open **Actions → Deploy Daily Poster Packet → Run workflow**, enable **Seed the production D1 database**, and run it once.
+
+The workflow deploys the Worker, applies D1 migrations, and writes `POSTER_ADMIN_TOKEN` into Cloudflare automatically. You do not need to run `wrangler secret put` or `npm run deploy` manually when using GitHub Actions.
+
+The API token must include Workers Scripts edit, D1 edit, and Workers R2 Storage write permissions so the workflow can provision resources. Resource creation is idempotent by name: an existing database or bucket is reused.
+
+Creating an R2 bucket does not automatically create a production public URL. Configure an R2 custom domain (recommended) or enable its `r2.dev` URL in Cloudflare, then store that origin in `R2_PUBLIC_BASE_URL`. Likewise, configure the Worker custom domain in Cloudflare and store it in `PUBLIC_BASE_URL`.
 
 ## Updating the brand system
 

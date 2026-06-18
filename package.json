@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "cloudflare:ensure-resources": "node scripts/ensure-cloudflare-resources.mjs",
     "db:migrate": "wrangler d1 migrations apply daily-poster-packet-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply daily-poster-packet-db --remote",
     "db:seed": "wrangler d1 execute daily-poster-packet-db --local --file=./seed.sql",

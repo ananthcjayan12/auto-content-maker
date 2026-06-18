@@ -1,0 +1,93 @@
+name: Build PDF Print Cyient Server
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        working-directory: ./print-server
+        run: |
+          pip install -r requirements_server.txt
+          pip install pyinstaller
+
+      - name: Install Poppler (for pdf2image)
+        run: |
+          # Download poppler for Windows
+          $popplerUrl = "https://github.com/oschwartz10612/poppler-windows/releases/download/v24.02.0-0/Release-24.02.0-0.zip"
+          Invoke-WebRequest -Uri $popplerUrl -OutFile poppler.zip
+          Expand-Archive -Path poppler.zip -DestinationPath C:\poppler
+          # Add to PATH for this session
+          $env:PATH = "C:\poppler\poppler-24.02.0\Library\bin;" + $env:PATH
+          # Verify
+          pdftoppm -v
+
+      - name: Build EXE (Folder Mode)
+        working-directory: ./print-server
+        env:
+          PATH: C:\poppler\poppler-24.02.0\Library\bin;${{ env.PATH }}
+        run: |
+          # --onedir: Create a folder (less likely to trigger antivirus)
+          pyinstaller --onedir --name PDFPrintCyientBridge `
+            --add-binary "C:\poppler\poppler-24.02.0\Library\bin\*;poppler" `
+            app.py
+
+      - name: Create Zip Bundle
+        working-directory: ./print-server/dist
+        run: |
+          Compress-Archive -Path PDFPrintCyientBridge -DestinationPath PDFPrintCyientBridge-Windows.zip
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFPrintCyientBridge-Windows
+          path: ./print-server/dist/PDFPrintCyientBridge-Windows.zip
+
+  create-release:
+    needs: [build-windows]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PDFPrintCyientBridge-Windows
+          path: ./artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Release v${{ github.run_number }}
+          body: |
+            Automated build.
+            
+            ## Downloads
+            
+            | File | Description |
+            |------|-------------|
+            | **PDFPrintCyientBridge-Windows.zip** | 🪟 **Download This** - Extract and run `PDFPrintCyientBridge.exe` inside. No Python required. |
+            
+            ### How to run:
+            1. Download and Extract the ZIP.
+            2. Open the folder `PDFPrintCyientBridge`.
+            3. Double-click **`PDFPrintCyientBridge.exe`**.
+            4. Keep the window open.
+          files: |
+            ./artifacts/*.zip
+          draft: false
+          prerelease: false
