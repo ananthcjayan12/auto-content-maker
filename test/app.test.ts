@@ -375,6 +375,42 @@ describe("daily poster packet worker", () => {
     expect(text).toContain("Final ChatGPT Task Instruction");
   });
 
+  it("returns inline HTML with embedded base64 image data", async () => {
+    store.brands.set(brand.businessSlug, {
+      ...brand,
+      logoUrl: "https://poster.example.com/assets/logo.png",
+      brandReferenceBoardUrl: "https://poster.example.com/assets/board.png",
+    });
+    store.typeReferences.set(`${brand.businessSlug}:awareness`, {
+      businessSlug: brand.businessSlug,
+      posterType: "awareness",
+      productionReferenceImageUrl: "https://poster.example.com/assets/ref.png",
+      notes: "Permanent awareness style reference",
+    });
+    env.ASSETS = {
+      get: vi.fn().mockResolvedValue({
+        arrayBuffer: vi
+          .fn()
+          .mockResolvedValue(new Uint8Array([137, 80, 78, 71]).buffer),
+        writeHttpMetadata: (headers: Headers) => {
+          headers.set("content-type", "image/png");
+        },
+      }),
+    } as unknown as R2Bucket;
+
+    const response = await app.request(
+      `/daily-poster/${brand.businessSlug}/awareness/today.inline.html`,
+      {},
+      env,
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain("data:image/png;base64,");
+    expect(html).toContain("Copy inline image URL");
+    expect(env.ASSETS.get).toHaveBeenCalledTimes(3);
+  });
+
   it("returns stable brand context JSON without requiring a daily packet", async () => {
     store.packets.clear();
     const response = await app.request(
@@ -392,6 +428,7 @@ describe("daily poster packet worker", () => {
       brandHexPalette: BusinessBrandSystem["colors"];
       imageColorGuidanceHex: BusinessBrandSystem["colors"];
       textUrl: string;
+      inlineHtmlUrl: string;
     };
     expect(response.status).toBe(200);
     expect(body.businessBrandSystem.businessSlug).toBe(brand.businessSlug);
@@ -405,6 +442,9 @@ describe("daily poster packet worker", () => {
     expect(body.resolvedDate).toBe(today);
     expect(body.textUrl).toBe(
       `https://poster.example.com/daily-poster/${brand.businessSlug}/awareness/today.txt`,
+    );
+    expect(body.inlineHtmlUrl).toBe(
+      `https://poster.example.com/daily-poster/${brand.businessSlug}/awareness/today.inline.html`,
     );
     expect(body.brandHexPalette.primary).toBe("#0EA5A4");
     expect(body.imageColorGuidanceHex.darkText).toBe("#123333");

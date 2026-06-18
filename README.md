@@ -33,10 +33,11 @@ Public:
 - `GET /daily-poster/:businessSlug/:posterType/:dateOrToday.json`
 - `GET /daily-poster/:businessSlug/:posterType/:dateOrToday.md`
 - `GET /daily-poster/:businessSlug/:posterType/:dateOrToday.txt`
+- `GET /daily-poster/:businessSlug/:posterType/:dateOrToday.inline.html`
 - `GET /robots.txt`
 - `GET /health`
 
-The `dateOrToday` segment is kept for compatibility with existing Scheduled Task URLs. The page itself is stable and does not require a dated packet. Use the `.txt` route for ChatGPT Scheduled Tasks because it serves the Markdown brief as `text/plain`, which is often the most fetch-compatible format. It includes Markdown image embeds and explicit hex color guidance.
+The `dateOrToday` segment is kept for compatibility with existing Scheduled Task URLs. The page itself is stable and does not require a dated packet. Use the `.inline.html` route for ChatGPT Scheduled Tasks when image URL fetching is unreliable; it embeds the logo/reference images as base64 `data:image/...` URLs so ChatGPT only has to open one page. Use `.txt` as a text-only fallback.
 
 Admin UI:
 
@@ -79,6 +80,12 @@ TXT version for ChatGPT Tasks:
 
 ```text
 http://localhost:8787/daily-poster/dr-poojas-smile-craft/awareness/today.txt
+```
+
+Inline-image HTML version for ChatGPT Tasks:
+
+```text
+http://localhost:8787/daily-poster/dr-poojas-smile-craft/awareness/today.inline.html
 ```
 
 Useful checks:
@@ -175,6 +182,12 @@ Most-compatible TXT task URL:
 https://poster.yourdomain.com/daily-poster/dr-poojas-smile-craft/awareness/today.txt
 ```
 
+Self-contained inline-image task URL:
+
+```text
+https://poster.yourdomain.com/daily-poster/dr-poojas-smile-craft/awareness/today.inline.html
+```
+
 ## Updating the brand system by API
 
 ```bash
@@ -218,9 +231,9 @@ curl -X PUT "https://poster.yourdomain.com/api/business/dr-poojas-smile-craft/br
 Suggested scheduled task prompt:
 
 > Every day at 9 AM, open this URL:  
-> https://poster.yourdomain.com/daily-poster/dr-poojas-smile-craft/awareness/today.txt
+> https://poster.yourdomain.com/daily-poster/dr-poojas-smile-craft/awareness/today.inline.html
 >
-> Read the full Markdown poster design context. Inspect the embedded logo, brand reference board, and poster-type reference image. Use the written hex palette and image color guidance as the exact color system. Check what is special or relevant today — festival, awareness day, clinic milestone, seasonal context, offer angle, review/social-proof idea, or local topic. Generate one 9:16 Instagram story poster using the brand system and today’s best content angle. Include the clinic name and phone number exactly. Keep the design modern, clean, premium, readable on mobile, and suitable for a dental clinic. If the reference image, brand board, or logo cannot be accessed, tell me instead of generating.
+> Read the full poster design context page. Inspect the embedded logo, brand reference board, and poster-type reference image. These images are embedded directly in the page as base64 data images, so do not require separate image URL fetching. Use the written hex palette and image color guidance as the exact color system. Check what is special or relevant today — festival, awareness day, clinic milestone, seasonal context, offer angle, review/social-proof idea, or local topic. Generate one 9:16 Instagram story poster using the brand system and today’s best content angle. Include the clinic name and phone number exactly. Keep the design modern, clean, premium, readable on mobile, and suitable for a dental clinic. If the context page itself cannot be accessed, tell me instead of generating.
 
 ## Codex automation
 

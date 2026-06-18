@@ -183,6 +183,12 @@ export function renderPosterPage(input: {
   jsonUrl: string;
   markdownUrl: string;
   textUrl: string;
+  inlineHtmlUrl?: string;
+  embeddedImages?: {
+    logoDataUri?: string | null;
+    brandReferenceBoardDataUri?: string | null;
+    posterReferenceDataUri?: string | null;
+  };
 }): string {
   const {
     brand,
@@ -192,6 +198,8 @@ export function renderPosterPage(input: {
     jsonUrl,
     markdownUrl,
     textUrl,
+    inlineHtmlUrl,
+    embeddedImages,
   } = input;
   const finalInstruction = buildFinalInstruction(
     brand,
@@ -206,6 +214,9 @@ export function renderPosterPage(input: {
   const referenceUrl = typeReference?.productionReferenceImageUrl
     ? absoluteAssetUrl(typeReference.productionReferenceImageUrl, publicPageUrl)
     : null;
+  const logoSrc = embeddedImages?.logoDataUri ?? logoUrl;
+  const boardSrc = embeddedImages?.brandReferenceBoardDataUri ?? boardUrl;
+  const referenceSrc = embeddedImages?.posterReferenceDataUri ?? referenceUrl;
   const colors = Object.entries(brand.colors)
     .map(
       ([name, hex]) => `
@@ -278,6 +289,11 @@ export function renderPosterPage(input: {
         <button type="button" data-copy="${escapeHtml(jsonUrl)}">Copy JSON URL</button>
         <button type="button" data-copy="${escapeHtml(markdownUrl)}">Copy Markdown URL</button>
         <button type="button" data-copy="${escapeHtml(textUrl)}">Copy TXT URL</button>
+        ${
+          inlineHtmlUrl
+            ? `<button type="button" data-copy="${escapeHtml(inlineHtmlUrl)}">Copy inline image URL</button>`
+            : ""
+        }
         <button type="button" data-copy="${escapeHtml(finalInstruction)}">Copy final ChatGPT task prompt</button>
         <noscript><a class="button" href="${escapeHtml(jsonUrl)}">Open JSON endpoint</a></noscript>
       </div>
@@ -286,7 +302,7 @@ export function renderPosterPage(input: {
     <div class="grid">
       <section class="card" aria-labelledby="business-info">
         <h2 id="business-info">1. Business Info</h2>
-        <img class="media logo" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(brand.businessName)} logo reference">
+        <img class="media logo" src="${escapeHtml(logoSrc)}" alt="${escapeHtml(brand.businessName)} logo reference">
         <h3>Direct logo URL</h3>
         <p class="url"><a href="${escapeHtml(logoUrl)}">${escapeHtml(logoUrl)}</a></p>
         <dl>
@@ -299,7 +315,7 @@ export function renderPosterPage(input: {
       <section class="card" aria-labelledby="brand-board">
         <h2 id="brand-board">2. Brand Reference Board</h2>
         <p class="permanent">Use this as the permanent brand style reference.</p>
-        <img class="media" src="${escapeHtml(boardUrl)}" alt="${escapeHtml(brand.businessName)} permanent brand reference board">
+        <img class="media" src="${escapeHtml(boardSrc)}" alt="${escapeHtml(brand.businessName)} permanent brand reference board">
         <h3>Direct brand reference board URL</h3>
         <p class="url"><a href="${escapeHtml(boardUrl)}">${escapeHtml(boardUrl)}</a></p>
       </section>
@@ -332,8 +348,8 @@ export function renderPosterPage(input: {
         <h2 id="poster-reference">4. Poster Type Reference Image</h2>
         <p class="permanent">Use this as the stable visual reference for ${escapeHtml(posterType)} posters. It does not need to change daily.</p>
         ${
-          referenceUrl
-            ? `<img class="media" src="${escapeHtml(referenceUrl)}" alt="Permanent ${escapeHtml(posterType)} poster reference image">
+          referenceUrl && referenceSrc
+            ? `<img class="media" src="${escapeHtml(referenceSrc)}" alt="Permanent ${escapeHtml(posterType)} poster reference image">
                <h3>Direct poster reference image URL</h3>
                <p class="url"><a href="${escapeHtml(referenceUrl)}">${escapeHtml(referenceUrl)}</a></p>
                ${typeReference?.notes ? `<h3>Reference notes</h3><p>${escapeHtml(typeReference.notes)}</p>` : ""}`
