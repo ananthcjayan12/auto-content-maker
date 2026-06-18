@@ -208,7 +208,7 @@ curl -sS -X POST \
   -H "Authorization: Bearer $POSTER_ADMIN_TOKEN" | jq
 ```
 
-Use `force=true` when you want to regenerate even if today already has a ready poster.
+Use `force=true` when you want to regenerate even if today already has a ready poster. Each generated image is saved with a unique run id in the filename, so forced regenerations produce a new URL instead of reusing a cached asset URL.
 
 The full poster step makes the second Gemini call through the Interactions API using:
 
@@ -233,9 +233,9 @@ Expected success shape:
     "angle": "...",
     "briefJson": "{...}",
     "prompt": "...",
-    "imageUrl": "https://posters.srshti.co.in/assets/businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.jpg",
+    "imageUrl": "https://posters.srshti.co.in/assets/businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD-RUNID.jpg",
     "imageContentType": "image/jpeg",
-    "r2Key": "businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.jpg",
+    "r2Key": "businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD-RUNID.jpg",
     "geminiTextModel": "gemini-3.5-flash",
     "geminiImageModel": "gemini-3.1-flash-image",
     "validationErrors": [],
@@ -273,7 +273,7 @@ Expected:
   "success": true,
   "generatedPoster": {
     "status": "ready",
-    "imageUrl": "https://posters.srshti.co.in/assets/businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.jpg"
+    "imageUrl": "https://posters.srshti.co.in/assets/businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD-RUNID.jpg"
   }
 }
 ```
@@ -302,7 +302,7 @@ generatedPoster.r2Key
 Expected key pattern:
 
 ```text
-businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.jpg
+businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD-RUNID.jpg
 ```
 
 Check in Cloudflare:
@@ -316,7 +316,7 @@ Confirm that object exists.
 If using the Worker asset route, this URL should load:
 
 ```text
-https://posters.srshti.co.in/assets/businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.jpg
+https://posters.srshti.co.in/assets/businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD-RUNID.jpg
 ```
 
 ## 8. Confirm D1 Metadata Exists

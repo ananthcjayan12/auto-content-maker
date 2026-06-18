@@ -419,14 +419,18 @@ function buildImagePrompt(input: {
   date: string;
   brief: Record<string, unknown>;
   contextUrl: string;
+  runId: string;
+  force?: boolean;
 }): string {
-  const { brand, posterType, typeReference, date, brief, contextUrl } = input;
+  const { brand, posterType, typeReference, date, brief, contextUrl, runId } =
+    input;
   return `Create one complete 9:16 Instagram story poster image.
 
 Business: ${brand.businessName}
 Phone: ${brand.phone}
 Date: ${date}
 Poster type: ${posterType}
+Generation run id: ${runId}
 Context page: ${contextUrl}
 Brief JSON: ${JSON.stringify(brief)}
 
@@ -459,6 +463,7 @@ Design constraints:
 - do not make a crowded flyer
 - do not invent a new logo
 - avoid unsupported medical cure claims
+- create a fresh visual variant for this generation run; do not intentionally repeat a previous render pixel-for-pixel
 ${typeReference?.productionReferenceImageUrl ? "- strongly follow the stable poster reference image for font weight, text hierarchy, spacing, divider treatment, photo mask shape, accent style, and overall premium teal/navy look" : ""}`;
 }
 
@@ -512,6 +517,7 @@ export async function runPosterOrchestrator(input: {
   const apiKey = env.GEMINI_API_KEY?.trim();
   const textModel = env.GEMINI_TEXT_MODEL || "gemini-3.5-flash";
   const imageModel = env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
+  const runId = new Date().toISOString().replaceAll(/\D/g, "").slice(0, 17);
 
   const existing = await store.getGeneratedPoster(
     businessSlug,
@@ -576,6 +582,8 @@ export async function runPosterOrchestrator(input: {
       date,
       brief: briefResult.brief,
       contextUrl,
+      runId,
+      force: input.force,
     });
 
     const [logo, board, posterReference] = await Promise.all([
@@ -641,7 +649,7 @@ export async function runPosterOrchestrator(input: {
     }
 
     const extension = imageExtension(image.mimeType);
-    const r2Key = `businesses/${businessSlug}/generated/${posterType}/${date}.${extension}`;
+    const r2Key = `businesses/${businessSlug}/generated/${posterType}/${date}-${runId}.${extension}`;
     await env.ASSETS.put(r2Key, base64ToArrayBuffer(image.data), {
       httpMetadata: {
         contentType: image.mimeType,

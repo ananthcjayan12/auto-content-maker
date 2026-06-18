@@ -639,9 +639,12 @@ describe("daily poster packet worker", () => {
     expect(body.success).toBe(true);
     expect(body.generatedPoster.status).toBe("ready");
     expect(body.generatedPoster.angle).toBe("Monsoon dental care");
-    expect(body.generatedPoster.imageUrl).toBe(
-      `https://poster.example.com/assets/businesses/${brand.businessSlug}/generated/awareness/${today}.jpg`,
+    expect(body.generatedPoster.imageUrl).toMatch(
+      new RegExp(
+        `^https://poster\\.example\\.com/assets/businesses/${brand.businessSlug}/generated/awareness/${today}-\\d{17}\\.jpg$`,
+      ),
     );
+    expect(body.generatedPoster.prompt).toContain("Generation run id:");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const imageCall = fetchMock.mock.calls[1];
     expect(imageCall).toBeDefined();
