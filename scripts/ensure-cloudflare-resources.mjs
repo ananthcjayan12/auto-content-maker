@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { parse } from "jsonc-parser";
 
 const configPath = "wrangler.jsonc";
 const d1Name = process.env.D1_DATABASE_NAME?.trim() || "daily-poster-packet-db";
@@ -83,7 +84,16 @@ function ensureR2Bucket() {
 }
 
 function updateWranglerConfig(d1Id) {
-  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  const parseErrors = [];
+  const config = parse(readFileSync(configPath, "utf8"), parseErrors, {
+    allowTrailingComma: true,
+    disallowComments: false,
+  });
+  if (!config || parseErrors.length) {
+    throw new Error(
+      `Could not parse ${configPath} as JSONC. Parse errors: ${JSON.stringify(parseErrors)}`,
+    );
+  }
   const database = config.d1_databases?.find(
     (binding) => binding.binding === "DB",
   );
