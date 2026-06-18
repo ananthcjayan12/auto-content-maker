@@ -233,9 +233,9 @@ Expected success shape:
     "angle": "...",
     "briefJson": "{...}",
     "prompt": "...",
-    "imageUrl": "https://posters.srshti.co.in/assets/businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.png",
-    "imageContentType": "image/png",
-    "r2Key": "businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.png",
+    "imageUrl": "https://posters.srshti.co.in/assets/businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.jpg",
+    "imageContentType": "image/jpeg",
+    "r2Key": "businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.jpg",
     "geminiTextModel": "gemini-3.5-flash",
     "geminiImageModel": "gemini-3.1-flash-image",
     "validationErrors": [],
@@ -273,7 +273,7 @@ Expected:
   "success": true,
   "generatedPoster": {
     "status": "ready",
-    "imageUrl": "https://posters.srshti.co.in/assets/businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.png"
+    "imageUrl": "https://posters.srshti.co.in/assets/businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.jpg"
   }
 }
 ```
@@ -302,7 +302,7 @@ generatedPoster.r2Key
 Expected key pattern:
 
 ```text
-businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.png
+businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.jpg
 ```
 
 Check in Cloudflare:
@@ -316,7 +316,7 @@ Confirm that object exists.
 If using the Worker asset route, this URL should load:
 
 ```text
-https://posters.srshti.co.in/assets/businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.png
+https://posters.srshti.co.in/assets/businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD.jpg
 ```
 
 ## 8. Confirm D1 Metadata Exists

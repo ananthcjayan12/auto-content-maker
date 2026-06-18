@@ -604,8 +604,8 @@ describe("daily poster packet worker", () => {
         new Response(
           JSON.stringify({
             output_image: {
-              mime_type: "image/png",
-              data: "iVBORw==",
+              mime_type: "image/jpeg",
+              data: "/9j/2w==",
             },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
@@ -631,7 +631,7 @@ describe("daily poster packet worker", () => {
     expect(body.generatedPoster.status).toBe("ready");
     expect(body.generatedPoster.angle).toBe("Monsoon dental care");
     expect(body.generatedPoster.imageUrl).toBe(
-      `https://poster.example.com/assets/businesses/${brand.businessSlug}/generated/awareness/${today}.png`,
+      `https://poster.example.com/assets/businesses/${brand.businessSlug}/generated/awareness/${today}.jpg`,
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const imageCall = fetchMock.mock.calls[1];
@@ -639,6 +639,7 @@ describe("daily poster packet worker", () => {
     const imageCallBody = JSON.parse(String(imageCall?.[1]?.body));
     expect(String(imageCall?.[0])).toContain("/v1beta/interactions");
     expect(imageCallBody.model).toBe("gemini-3.1-flash-image");
+    expect(imageCallBody.response_format.mime_type).toBe("image/jpeg");
     expect(imageCallBody.response_format.image_size).toBe("1K");
     expect(imageCallBody.response_format.aspect_ratio).toBe("9:16");
     expect(imageCallBody.input).toHaveLength(4);
