@@ -32,7 +32,7 @@ The `today` alias resolves using `BUSINESS_TIMEZONE`, which defaults to `Asia/Ko
 
 ## Local setup
 
-Requirements: Node.js 20+ and a Cloudflare account for deployment.
+Requirements: Node.js 22+ and a Cloudflare account for deployment.
 
 ```bash
 npm install
