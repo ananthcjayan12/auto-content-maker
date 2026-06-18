@@ -562,11 +562,14 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
   const rawDate = c.req.param("dateOrToday");
   const wantsJson = rawDate.endsWith(".json");
   const wantsMarkdown = rawDate.endsWith(".md");
+  const wantsText = rawDate.endsWith(".txt");
   const dateOrToday = wantsJson
     ? rawDate.slice(0, -5)
     : wantsMarkdown
       ? rawDate.slice(0, -3)
-      : rawDate;
+      : wantsText
+        ? rawDate.slice(0, -4)
+        : rawDate;
   const result = await loadPublicContext(
     c.req.param("businessSlug"),
     c.req.param("posterType"),
@@ -590,7 +593,8 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
   const publicPageUrl = `${base}${explicitPath}`;
   const jsonUrl = `${publicPageUrl}.json`;
   const markdownUrl = `${publicPageUrl}.md`;
-  c.header("X-Robots-Tag", "noindex, nofollow");
+  const textUrl = `${publicPageUrl}.txt`;
+  c.header("X-Robots-Tag", "noindex");
   c.header("Cache-Control", "public, max-age=300");
   if (wantsJson) {
     return c.json({
@@ -600,6 +604,7 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
       publicPageUrl,
       jsonUrl,
       markdownUrl,
+      textUrl,
       posterTypeReference: result.typeReference,
       posterReferenceImageUrl:
         result.typeReference?.productionReferenceImageUrl ?? null,
@@ -612,7 +617,7 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
       ),
     });
   }
-  if (wantsMarkdown) {
+  if (wantsMarkdown || wantsText) {
     return c.text(
       renderPosterMarkdown({
         brand: result.brand,
@@ -621,9 +626,14 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
         publicPageUrl,
         jsonUrl,
         markdownUrl,
+        textUrl,
       }),
       200,
-      { "Content-Type": "text/markdown; charset=utf-8" },
+      {
+        "Content-Type": wantsText
+          ? "text/plain; charset=utf-8"
+          : "text/markdown; charset=utf-8",
+      },
     );
   }
   return c.html(
@@ -634,6 +644,7 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
       publicPageUrl,
       jsonUrl,
       markdownUrl,
+      textUrl,
     }),
   );
 });

@@ -353,28 +353,26 @@ describe("daily poster packet worker", () => {
     expect(html).toContain("First check what is special");
     expect(html).toContain("Copy Markdown URL");
     expect(html).toContain("Hex palette for LLM");
-    expect(html).toContain("noindex, nofollow");
+    expect(html).toContain('content="noindex"');
   });
 
-  it("returns markdown context with image embeds and hex guidance", async () => {
+  it("returns text context with image embeds and hex guidance", async () => {
     store.packets.clear();
     const response = await app.request(
-      `/daily-poster/${brand.businessSlug}/awareness/today.md`,
+      `/daily-poster/${brand.businessSlug}/awareness/today.txt`,
       {},
       env,
     );
-    const markdown = await response.text();
+    const text = await response.text();
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toContain("text/markdown");
-    expect(markdown).toContain(
-      `# Poster Design Context: ${brand.businessName}`,
-    );
-    expect(markdown).toContain("![Dr Pooja’s Smile Craft Dental Clinic logo]");
-    expect(markdown).toContain("## Brand Hex Palette");
-    expect(markdown).toContain("- Primary / main teal: #0EA5A4");
-    expect(markdown).toContain("## Image Color Guidance In Hex");
-    expect(markdown).toContain("https://example.com/type-ref.jpg");
-    expect(markdown).toContain("Final ChatGPT Task Instruction");
+    expect(response.headers.get("content-type")).toContain("text/plain");
+    expect(text).toContain(`# Poster Design Context: ${brand.businessName}`);
+    expect(text).toContain("![Dr Pooja’s Smile Craft Dental Clinic logo]");
+    expect(text).toContain("## Brand Hex Palette");
+    expect(text).toContain("- Primary / main teal: #0EA5A4");
+    expect(text).toContain("## Image Color Guidance In Hex");
+    expect(text).toContain("https://example.com/type-ref.jpg");
+    expect(text).toContain("Final ChatGPT Task Instruction");
   });
 
   it("returns stable brand context JSON without requiring a daily packet", async () => {
@@ -393,6 +391,7 @@ describe("daily poster packet worker", () => {
       finalChatGPTInstruction: string;
       brandHexPalette: BusinessBrandSystem["colors"];
       imageColorGuidanceHex: BusinessBrandSystem["colors"];
+      textUrl: string;
     };
     expect(response.status).toBe(200);
     expect(body.businessBrandSystem.businessSlug).toBe(brand.businessSlug);
@@ -404,6 +403,9 @@ describe("daily poster packet worker", () => {
       "https://example.com/type-ref.jpg",
     );
     expect(body.resolvedDate).toBe(today);
+    expect(body.textUrl).toBe(
+      `https://poster.example.com/daily-poster/${brand.businessSlug}/awareness/today.txt`,
+    );
     expect(body.brandHexPalette.primary).toBe("#0EA5A4");
     expect(body.imageColorGuidanceHex.darkText).toBe("#123333");
     expect(body.finalChatGPTInstruction).toContain("check what is special");

@@ -64,6 +64,7 @@ export function renderPosterMarkdown(input: {
   publicPageUrl: string;
   jsonUrl: string;
   markdownUrl: string;
+  textUrl: string;
 }): string {
   const {
     brand,
@@ -72,6 +73,7 @@ export function renderPosterMarkdown(input: {
     publicPageUrl,
     jsonUrl,
     markdownUrl,
+    textUrl,
   } = input;
   const finalInstruction = buildFinalInstruction(
     brand,
@@ -94,6 +96,7 @@ This Markdown file is optimized for ChatGPT Scheduled Tasks. It contains the sta
 - Public HTML URL: ${publicPageUrl}
 - Public JSON URL: ${jsonUrl}
 - Public Markdown URL: ${markdownUrl}
+- Public TXT URL: ${textUrl}
 - Poster type: ${posterType}
 
 ## Business
@@ -179,6 +182,7 @@ export function renderPosterPage(input: {
   publicPageUrl: string;
   jsonUrl: string;
   markdownUrl: string;
+  textUrl: string;
 }): string {
   const {
     brand,
@@ -187,6 +191,7 @@ export function renderPosterPage(input: {
     publicPageUrl,
     jsonUrl,
     markdownUrl,
+    textUrl,
   } = input;
   const finalInstruction = buildFinalInstruction(
     brand,
@@ -216,7 +221,7 @@ export function renderPosterPage(input: {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex, nofollow">
+  <meta name="robots" content="noindex">
   <title>Poster Design Context — ${escapeHtml(brand.businessName)}</title>
   <style>
     :root { --teal: ${escapeHtml(brand.colors.primary)}; --ink: ${escapeHtml(brand.colors.darkText)}; --muted: ${escapeHtml(brand.colors.mutedText)}; --cream: ${escapeHtml(brand.colors.secondary)}; --line: #dce8e7; --soft: #f5fbfa; }
@@ -272,6 +277,7 @@ export function renderPosterPage(input: {
         <button type="button" data-copy="${escapeHtml(publicPageUrl)}">Copy public page URL</button>
         <button type="button" data-copy="${escapeHtml(jsonUrl)}">Copy JSON URL</button>
         <button type="button" data-copy="${escapeHtml(markdownUrl)}">Copy Markdown URL</button>
+        <button type="button" data-copy="${escapeHtml(textUrl)}">Copy TXT URL</button>
         <button type="button" data-copy="${escapeHtml(finalInstruction)}">Copy final ChatGPT task prompt</button>
         <noscript><a class="button" href="${escapeHtml(jsonUrl)}">Open JSON endpoint</a></noscript>
       </div>

@@ -32,10 +32,11 @@ Public:
 - `GET /daily-poster/:businessSlug/:posterType/:dateOrToday`
 - `GET /daily-poster/:businessSlug/:posterType/:dateOrToday.json`
 - `GET /daily-poster/:businessSlug/:posterType/:dateOrToday.md`
+- `GET /daily-poster/:businessSlug/:posterType/:dateOrToday.txt`
 - `GET /robots.txt`
 - `GET /health`
 
-The `dateOrToday` segment is kept for compatibility with existing Scheduled Task URLs. The page itself is stable and does not require a dated packet. Use the `.md` route for ChatGPT Scheduled Tasks when possible; it includes Markdown image embeds and explicit hex color guidance.
+The `dateOrToday` segment is kept for compatibility with existing Scheduled Task URLs. The page itself is stable and does not require a dated packet. Use the `.txt` route for ChatGPT Scheduled Tasks because it serves the Markdown brief as `text/plain`, which is often the most fetch-compatible format. It includes Markdown image embeds and explicit hex color guidance.
 
 Admin UI:
 
@@ -72,6 +73,12 @@ Markdown version:
 
 ```text
 http://localhost:8787/daily-poster/dr-poojas-smile-craft/awareness/today.md
+```
+
+TXT version for ChatGPT Tasks:
+
+```text
+http://localhost:8787/daily-poster/dr-poojas-smile-craft/awareness/today.txt
 ```
 
 Useful checks:
@@ -162,6 +169,12 @@ Markdown task URL:
 https://poster.yourdomain.com/daily-poster/dr-poojas-smile-craft/awareness/today.md
 ```
 
+Most-compatible TXT task URL:
+
+```text
+https://poster.yourdomain.com/daily-poster/dr-poojas-smile-craft/awareness/today.txt
+```
+
 ## Updating the brand system by API
 
 ```bash
@@ -205,7 +218,7 @@ curl -X PUT "https://poster.yourdomain.com/api/business/dr-poojas-smile-craft/br
 Suggested scheduled task prompt:
 
 > Every day at 9 AM, open this URL:  
-> https://poster.yourdomain.com/daily-poster/dr-poojas-smile-craft/awareness/today.md
+> https://poster.yourdomain.com/daily-poster/dr-poojas-smile-craft/awareness/today.txt
 >
 > Read the full Markdown poster design context. Inspect the embedded logo, brand reference board, and poster-type reference image. Use the written hex palette and image color guidance as the exact color system. Check what is special or relevant today — festival, awareness day, clinic milestone, seasonal context, offer angle, review/social-proof idea, or local topic. Generate one 9:16 Instagram story poster using the brand system and today’s best content angle. Include the clinic name and phone number exactly. Keep the design modern, clean, premium, readable on mobile, and suitable for a dental clinic. If the reference image, brand board, or logo cannot be accessed, tell me instead of generating.
 
@@ -225,10 +238,10 @@ Recommended workflow:
 Public context pages are intentionally unauthenticated so ChatGPT Tasks can read them. They include:
 
 ```html
-<meta name="robots" content="noindex, nofollow" />
+<meta name="robots" content="noindex" />
 ```
 
-`robots.txt` allows user/search fetchers such as ChatGPT-User and OAI-SearchBot so Scheduled Tasks can read the page, while blocking GPTBot. The page still sends `noindex` directives. This discourages indexing but is not security. Do not store private or sensitive information on public pages.
+`robots.txt` allows user/search fetchers such as ChatGPT-User and OAI-SearchBot so Scheduled Tasks can read the page, while blocking GPTBot. The page still sends `noindex` directives, but does not send `nofollow`, because ChatGPT needs to follow embedded image links. This discourages indexing but is not security. Do not store private or sensitive information on public pages.
 
 ## API errors and validation
 
