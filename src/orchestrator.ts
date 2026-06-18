@@ -17,6 +17,11 @@ export interface ImageBase64Reference {
   base64: string;
 }
 
+interface LabeledImageReference extends ImageBase64Reference {
+  label: string;
+  guidance: string;
+}
+
 export function baseUrl(requestUrl: string, configured?: string): string {
   const candidate = configured?.trim();
   if (candidate) return candidate.replace(/\/+$/, "");
@@ -132,7 +137,7 @@ async function callGeminiImageInteraction(input: {
   apiKey: string;
   model: string;
   prompt: string;
-  references: ImageBase64Reference[];
+  references: LabeledImageReference[];
 }): Promise<Record<string, unknown>> {
   const response = await fetch(geminiInteractionsEndpoint(), {
     method: "POST",
@@ -145,11 +150,17 @@ async function callGeminiImageInteraction(input: {
       model: input.model,
       input: [
         { type: "text", text: input.prompt },
-        ...input.references.map((reference) => ({
-          type: "image",
-          data: reference.base64,
-          mime_type: reference.contentType,
-        })),
+        ...input.references.flatMap((reference) => [
+          {
+            type: "text",
+            text: `REFERENCE IMAGE: ${reference.label}. ${reference.guidance}`,
+          },
+          {
+            type: "image",
+            data: reference.base64,
+            mime_type: reference.contentType,
+          },
+        ]),
       ],
       response_format: {
         type: "image",
@@ -345,6 +356,13 @@ Return only compact JSON with these keys:
 - visualDirection: concise design direction
 - safetyNotes: dental/medical claims to avoid
 
+Strict output rules:
+- Return one valid JSON object only.
+- Do not wrap it in markdown.
+- Do not add text before or after the JSON.
+- Escape quotes inside strings.
+- Keep requiredText to 2-4 short lines so the final poster stays readable.
+
 Context JSON URL: ${contextJsonUrl}
 Business: ${brand.businessName}
 Phone: ${brand.phone}
@@ -412,7 +430,22 @@ Poster type: ${posterType}
 Context page: ${contextUrl}
 Brief JSON: ${JSON.stringify(brief)}
 
-Use the attached logo, brand reference board, and poster-type reference image when available. Preserve the existing logo identity. Use exact brand colors: ${JSON.stringify(brand.colors)}. Typography mood: ${JSON.stringify(brand.typography)}. Visual style: ${JSON.stringify(brand.visualStyle)}.
+Use the attached reference images with this priority:
+1. Poster type reference image: this is the main composition, typography, spacing, and styling reference. Closely follow its design language.
+2. Logo image: preserve the existing logo identity and place it as a small brand mark or lockup, not as a redesigned logo.
+3. Brand reference board: use only for brand feel if it is a real brand board; ignore it if it is a placeholder.
+
+Style-match requirements from the poster reference:
+- use a pale aqua or clean white background with premium clinical whitespace
+- use very large bold geometric sans-serif headline typography, deep navy for primary words and deep teal for emphasis
+- use controlled all-caps tracking for small label text where appropriate
+- use thin teal divider lines and small sparkle/star accents sparingly
+- use a rounded or organic photo card/mask with a clean white border
+- keep the layout structured like a premium social poster, not a generic AI flyer
+- do not use random fonts, decorative script, or mismatched typography unless the reference itself uses it for a small accent
+- do not drift into a different color palette or casual stock-template style
+
+Use exact brand colors: ${JSON.stringify(brand.colors)}. Typography mood: ${JSON.stringify(brand.typography)}. Visual style: ${JSON.stringify(brand.visualStyle)}.
 
 Required visible text exactly:
 ${brand.businessName}
@@ -426,7 +459,7 @@ Design constraints:
 - do not make a crowded flyer
 - do not invent a new logo
 - avoid unsupported medical cure claims
-${typeReference?.productionReferenceImageUrl ? "- follow the stable poster reference composition/style" : ""}`;
+${typeReference?.productionReferenceImageUrl ? "- strongly follow the stable poster reference image for font weight, text hierarchy, spacing, divider treatment, photo mask shape, accent style, and overall premium teal/navy look" : ""}`;
 }
 
 function imageExtension(contentType: string): string {
@@ -558,8 +591,33 @@ export async function runPosterOrchestrator(input: {
         publicBaseUrl: base,
       }),
     ]);
-    const references = [logo, board, posterReference].filter(
-      (reference): reference is ImageBase64Reference => Boolean(reference),
+    const references: LabeledImageReference[] = [
+      logo
+        ? {
+            ...logo,
+            label: "Logo",
+            guidance:
+              "Use only as the clinic identity reference. Preserve it; do not redesign or invent a new logo.",
+          }
+        : null,
+      board
+        ? {
+            ...board,
+            label: "Brand reference board",
+            guidance:
+              "Use for overall brand colors and mood only. If it appears to be a placeholder, give it low priority.",
+          }
+        : null,
+      posterReference
+        ? {
+            ...posterReference,
+            label: `${posterType} poster style reference`,
+            guidance:
+              "Highest-priority visual style reference. Match its typography hierarchy, font weight, spacing, pale aqua background, teal/navy palette, rounded photo mask, thin divider lines, sparkle accents, and premium clinical poster composition.",
+          }
+        : null,
+    ].filter((reference): reference is LabeledImageReference =>
+      Boolean(reference),
     );
 
     const imageResponse = await callGeminiImageInteraction({

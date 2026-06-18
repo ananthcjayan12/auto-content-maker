@@ -651,7 +651,16 @@ describe("daily poster packet worker", () => {
     expect(imageCallBody.response_format.mime_type).toBe("image/jpeg");
     expect(imageCallBody.response_format.image_size).toBe("1K");
     expect(imageCallBody.response_format.aspect_ratio).toBe("9:16");
-    expect(imageCallBody.input).toHaveLength(4);
+    expect(imageCallBody.input).toHaveLength(7);
+    expect(JSON.stringify(imageCallBody.input)).toContain(
+      "REFERENCE IMAGE: Logo",
+    );
+    expect(JSON.stringify(imageCallBody.input)).toContain(
+      "REFERENCE IMAGE: awareness poster style reference",
+    );
+    expect(JSON.stringify(imageCallBody.input)).toContain(
+      "Highest-priority visual style reference",
+    );
     expect(env.ASSETS.get).toHaveBeenCalledTimes(3);
     expect(put).toHaveBeenCalledOnce();
   });
