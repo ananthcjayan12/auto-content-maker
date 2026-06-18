@@ -228,7 +228,7 @@ Public context pages are intentionally unauthenticated so ChatGPT Tasks can read
 <meta name="robots" content="noindex, nofollow" />
 ```
 
-and `robots.txt` disallows all crawlers. This discourages indexing but is not security. Do not store private or sensitive information on public pages.
+`robots.txt` allows user/search fetchers such as ChatGPT-User and OAI-SearchBot so Scheduled Tasks can read the page, while blocking GPTBot. The page still sends `noindex` directives. This discourages indexing but is not security. Do not store private or sensitive information on public pages.
 
 ## API errors and validation
 

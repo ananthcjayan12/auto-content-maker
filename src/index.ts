@@ -488,9 +488,26 @@ app.get("/assets/:key{.+}", async (c) => {
 });
 
 app.get("/robots.txt", (c) =>
-  c.text("User-agent: *\nDisallow: /\n", 200, {
-    "Content-Type": "text/plain; charset=utf-8",
-  }),
+  c.text(
+    [
+      "User-agent: ChatGPT-User",
+      "Allow: /",
+      "",
+      "User-agent: OAI-SearchBot",
+      "Allow: /",
+      "",
+      "User-agent: GPTBot",
+      "Disallow: /",
+      "",
+      "User-agent: *",
+      "Allow: /",
+      "",
+    ].join("\n"),
+    200,
+    {
+      "Content-Type": "text/plain; charset=utf-8",
+    },
+  ),
 );
 
 app.get("/health", (c) =>
