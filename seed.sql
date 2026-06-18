@@ -18,10 +18,10 @@ INSERT INTO business_brand_systems (
   'https://drpoojassmilecraftdental.com/',
   'https://placehold.co/900x360/0EA5A4/FFFFFF.png?text=Dr+Pooja%27s+Smile+Craft+Logo',
   'https://placehold.co/1200x900/F7E7CE/123333.png?text=Brand+Reference+Board',
-  '{"primary":"#0EA5A4","secondary":"#F7E7CE","accent":"#FFFFFF","darkText":"#123333","mutedText":"#5F6F6F"}',
-  '{"headingStyle":"modern premium sans-serif","bodyStyle":"clean readable sans-serif","fontMood":"premium, soft, clinical, friendly"}',
-  '{"mood":"modern, clean, premium, warm dental clinic aesthetic","layout":"minimal, high whitespace, elegant curved shapes, soft medical luxury","photoStyle":"bright dental clinic photography, clean interior, smiling patients, soft lighting","avoid":["crowded flyer look","too many colors","cheap stock poster style","cartoon teeth unless specifically requested","generic hospital emergency look","overly promotional discount-heavy design"]}',
-  '["Always keep the design clean and premium","Use clinic name exactly","Use phone number exactly","Use logo as reference but do not invent a new logo","Keep text readable on mobile","Prefer 9:16 Instagram story aspect ratio unless otherwise specified"]'
+  '{"primary":"#008E8C","secondary":"#DFF7F7","accent":"#FFFFFF","darkText":"#071529","mutedText":"#5F7478"}',
+  '{"headingStyle":"bold geometric sans-serif with heavy display weight for hero words","bodyStyle":"clean modern sans-serif with generous spacing and high clarity","fontMood":"premium, clinical, confident, celebratory, polished social poster"}',
+  '{"mood":"premium dental clinic, clean white space, teal clinical luxury","layout":"bold hierarchy, large hero typography, curved photo masks, fine divider lines, dental sparkle accents","photoStyle":"bright clinic photography, teal-accented interiors, clean equipment, soft daylight, polished but real","avoid":["crowded flyer look","generic hospital emergency look","random stock dental icons","discount-heavy offer poster styling","too many colors outside teal, navy, white, and soft aqua","cartoon teeth unless specifically requested"]}',
+  '["Use deep teal as the main brand color and deep navy for high-impact text","Keep the background mostly white or very pale aqua","Use bold oversized typography for the main message","Use refined dental sparkle accents and thin divider lines sparingly","Use rounded or curved image masks inspired by the reference posters","Use clinic name and phone number exactly","Keep text readable on mobile","Prefer 9:16 Instagram story aspect ratio unless otherwise specified"]'
 )
 ON CONFLICT(business_slug) DO UPDATE SET
   business_name = excluded.business_name,

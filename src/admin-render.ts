@@ -132,6 +132,7 @@ export function renderDashboard(input: {
             <input name="logoUrl" type="hidden" value="${escapeHtml(brand.logoUrl)}"><label for="logoFile">Replace logo image</label><input id="logoFile" name="logoFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
             <h3>Brand reference board</h3><img class="preview" src="${escapeHtml(brand.brandReferenceBoardUrl)}" alt="Current brand reference board"><p class="url">${escapeHtml(brand.brandReferenceBoardUrl)}</p>
             <input name="brandReferenceBoardUrl" type="hidden" value="${escapeHtml(brand.brandReferenceBoardUrl)}"><label for="boardFile">Replace brand board image</label><input id="boardFile" name="boardFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+            <div class="actions"><button class="secondary" type="submit" form="poster-preset-form">Apply Smile Craft poster preset</button></div>
             <h3>Colors</h3><div class="colors">
               ${Object.entries(brand.colors)
                 .map(
@@ -152,6 +153,7 @@ export function renderDashboard(input: {
             <label>Default poster rules — one per line</label><textarea name="defaultPosterRules">${lines(brand.defaultPosterRules)}</textarea>
             <div class="actions"><button type="submit">Save brand system</button></div>
           </form>
+          <form id="poster-preset-form" method="post" action="/admin/${escapeHtml(brand.businessSlug)}/preset"></form>
         </section>
 
         <section class="card">

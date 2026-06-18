@@ -6,7 +6,8 @@ import {
   getAdminBusinessSlug,
   setAdminSession,
 } from "./admin-session";
-import { isUploadedFile, uploadImage } from "./assets";
+import { imageContentTypeForKey, isUploadedFile, uploadImage } from "./assets";
+import { applyDrPoojaSmileCraftPreset } from "./brand-presets";
 import {
   buildFinalInstruction,
   renderErrorPage,
@@ -294,6 +295,28 @@ app.post("/admin/:businessSlug/brand", async (c) => {
   }
 });
 
+app.post("/admin/:businessSlug/preset", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  const existing = await store.getBrand(businessSlug);
+  if (!existing) {
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  }
+  await store.upsertBrand(applyDrPoojaSmileCraftPreset(existing));
+  return adminRedirect(c, businessSlug, {
+    message: "Smile Craft poster preset applied.",
+  });
+});
+
 app.post("/admin/:businessSlug/packet", async (c) => {
   const businessSlug = c.req.param("businessSlug");
   if (!(await hasAdminAccess(c, businessSlug))) {
@@ -395,8 +418,8 @@ app.post("/admin/:businessSlug/packet", async (c) => {
   }
 });
 
-app.get("/assets/*", async (c) => {
-  const key = c.req.param("*");
+app.get("/assets/:key{.+}", async (c) => {
+  const key = c.req.path.replace(/^\/assets\//, "");
   if (!key || !c.env.ASSETS) {
     return c.text("Asset not found.", 404);
   }
@@ -404,6 +427,9 @@ app.get("/assets/*", async (c) => {
   if (!object) return c.text("Asset not found.", 404);
   const headers = new Headers();
   object.writeHttpMetadata(headers);
+  if (!headers.get("content-type")) {
+    headers.set("content-type", imageContentTypeForKey(key));
+  }
   headers.set("etag", object.httpEtag);
   headers.set(
     "cache-control",

@@ -226,6 +226,59 @@ describe("daily poster packet worker", () => {
     );
   });
 
+  it("serves R2 assets with an image content type fallback", async () => {
+    env.ASSETS = {
+      get: vi.fn().mockResolvedValue({
+        body: new Blob(["jpg"], { type: "image/jpeg" }).stream(),
+        httpEtag: '"asset-etag"',
+        writeHttpMetadata: vi.fn(),
+      }),
+    } as unknown as R2Bucket;
+
+    const response = await app.request(
+      "/assets/businesses/dr-poojas-smile-craft/brand/logo-123.jpg",
+      {},
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(response.headers.get("etag")).toBe('"asset-etag"');
+  });
+
+  it("applies the Smile Craft poster preset from the dashboard", async () => {
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+
+    const response = await app.request(
+      `/admin/${brand.businessSlug}/preset`,
+      { method: "POST", headers: { Cookie: cookie } },
+      env,
+    );
+
+    expect(response.status).toBe(303);
+    const updatedBrand = await store.getBrand(brand.businessSlug);
+    expect(updatedBrand?.colors.primary).toBe("#008E8C");
+    expect(updatedBrand?.colors.darkText).toBe("#071529");
+    expect(updatedBrand?.typography.headingStyle).toContain(
+      "bold geometric sans-serif",
+    );
+    expect(updatedBrand?.defaultPosterRules).toContain(
+      "Use deep teal as the main brand color and deep navy for high-impact text",
+    );
+  });
+
   it("renders the public page with visible packet context", async () => {
     const response = await app.request(
       `/daily-poster/${brand.businessSlug}/awareness/today`,

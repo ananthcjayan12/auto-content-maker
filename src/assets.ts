@@ -8,6 +8,14 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
   "image/gif": "gif",
 };
 
+const EXTENSION_CONTENT_TYPES: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+  gif: "image/gif",
+};
+
 export function isUploadedFile(
   value: FormDataEntryValue | null,
 ): value is File {
@@ -46,4 +54,9 @@ export async function uploadImage(input: {
   return env.R2_PUBLIC_BASE_URL
     ? `${assetOrigin}/${key}`
     : `${assetOrigin}/assets/${key}`;
+}
+
+export function imageContentTypeForKey(key: string): string {
+  const extension = key.split(".").pop()?.toLowerCase() ?? "";
+  return EXTENSION_CONTENT_TYPES[extension] ?? "application/octet-stream";
 }
