@@ -11,7 +11,6 @@ import { applyDrPoojaSmileCraftPreset } from "./brand-presets";
 import {
   buildFinalInstruction,
   renderErrorPage,
-  renderPosterMarkdown,
   renderPosterPage,
 } from "./render";
 import { D1PosterStore } from "./store";
@@ -60,11 +59,16 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-async function imageUrlToDataUri(input: {
+async function imageUrlToBase64(input: {
   url: string | null;
   env: Bindings;
   publicBaseUrl: string;
-}): Promise<string | null> {
+}): Promise<{
+  url: string;
+  contentType: string;
+  byteLength: number;
+  base64: string;
+} | null> {
   const { url, env, publicBaseUrl } = input;
   if (!url) return null;
 
@@ -86,7 +90,12 @@ async function imageUrlToDataUri(input: {
       const contentType =
         headers.get("content-type") || imageContentTypeForKey(key);
       const buffer = await object.arrayBuffer();
-      return `data:${contentType};base64,${arrayBufferToBase64(buffer)}`;
+      return {
+        url: parsed.toString(),
+        contentType,
+        byteLength: buffer.byteLength,
+        base64: arrayBufferToBase64(buffer),
+      };
     }
 
     const response = await fetch(parsed.toString(), {
@@ -96,7 +105,12 @@ async function imageUrlToDataUri(input: {
     const contentType = response.headers.get("content-type") || "";
     if (!contentType.toLowerCase().startsWith("image/")) return null;
     const buffer = await response.arrayBuffer();
-    return `data:${contentType.split(";")[0]};base64,${arrayBufferToBase64(buffer)}`;
+    return {
+      url: parsed.toString(),
+      contentType: contentType.split(";")[0] || "application/octet-stream",
+      byteLength: buffer.byteLength,
+      base64: arrayBufferToBase64(buffer),
+    };
   } catch {
     return null;
   }
@@ -612,22 +626,8 @@ async function loadPublicContext(
 
 app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
   const rawDate = c.req.param("dateOrToday");
-  const wantsInlineHtml = rawDate.endsWith(".inline.html");
-  const wantsImagesJson = rawDate.endsWith(".images.json");
   const wantsJson = rawDate.endsWith(".json");
-  const wantsMarkdown = rawDate.endsWith(".md");
-  const wantsText = rawDate.endsWith(".txt");
-  const dateOrToday = wantsInlineHtml
-    ? rawDate.slice(0, -12)
-    : wantsImagesJson
-      ? rawDate.slice(0, -12)
-      : wantsJson
-        ? rawDate.slice(0, -5)
-        : wantsMarkdown
-          ? rawDate.slice(0, -3)
-          : wantsText
-            ? rawDate.slice(0, -4)
-            : rawDate;
+  const dateOrToday = wantsJson ? rawDate.slice(0, -5) : rawDate;
   const result = await loadPublicContext(
     c.req.param("businessSlug"),
     c.req.param("posterType"),
@@ -650,68 +650,8 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
   const explicitPath = `/daily-poster/${result.brand.businessSlug}/${result.posterType}/today`;
   const publicPageUrl = `${base}${explicitPath}`;
   const jsonUrl = `${publicPageUrl}.json`;
-  const markdownUrl = `${publicPageUrl}.md`;
-  const textUrl = `${publicPageUrl}.txt`;
-  const inlineHtmlUrl = `${publicPageUrl}.inline.html`;
-  const imagesJsonUrl = `${publicPageUrl}.images.json`;
   c.header("X-Robots-Tag", "noindex");
   c.header("Cache-Control", "public, max-age=300");
-  if (wantsImagesJson) {
-    const logoDataUri = await imageUrlToDataUri({
-      url: result.brand.logoUrl,
-      env: c.env,
-      publicBaseUrl: base,
-    });
-    const brandReferenceBoardDataUri = await imageUrlToDataUri({
-      url: result.brand.brandReferenceBoardUrl,
-      env: c.env,
-      publicBaseUrl: base,
-    });
-    const posterReferenceDataUri = await imageUrlToDataUri({
-      url: result.typeReference?.productionReferenceImageUrl ?? null,
-      env: c.env,
-      publicBaseUrl: base,
-    });
-    const imageDataUris = {
-      logo: logoDataUri,
-      brandReferenceBoard: brandReferenceBoardDataUri,
-      posterReference: posterReferenceDataUri,
-    };
-    const imageBase64 = {
-      logo: logoDataUri?.split(",", 2)[1] ?? null,
-      brandReferenceBoard: brandReferenceBoardDataUri?.split(",", 2)[1] ?? null,
-      posterReference: posterReferenceDataUri?.split(",", 2)[1] ?? null,
-    };
-    return c.json({
-      format: "daily-poster-context-with-base64-images",
-      businessBrandSystem: result.brand,
-      posterType: result.posterType,
-      resolvedDate: result.resolvedDate,
-      publicPageUrl,
-      jsonUrl,
-      imagesJsonUrl,
-      markdownUrl,
-      textUrl,
-      inlineHtmlUrl,
-      posterTypeReference: result.typeReference,
-      posterReferenceImageUrl:
-        result.typeReference?.productionReferenceImageUrl ?? null,
-      brandHexPalette: result.brand.colors,
-      imageColorGuidanceHex: result.brand.colors,
-      imageDataUris,
-      imageBase64,
-      imageDataNotes: [
-        "imageDataUris contains complete data:image/...;base64,... strings.",
-        "imageBase64 contains the raw base64 payload after the comma.",
-        "Use the embedded image data as the visual reference if direct image URLs cannot be fetched.",
-      ],
-      finalChatGPTInstruction: buildFinalInstruction(
-        result.brand,
-        result.posterType,
-        result.typeReference,
-      ),
-    });
-  }
   if (wantsJson) {
     return c.json({
       businessBrandSystem: result.brand,
@@ -719,10 +659,6 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
       resolvedDate: result.resolvedDate,
       publicPageUrl,
       jsonUrl,
-      markdownUrl,
-      textUrl,
-      inlineHtmlUrl,
-      imagesJsonUrl,
       posterTypeReference: result.typeReference,
       posterReferenceImageUrl:
         result.typeReference?.productionReferenceImageUrl ?? null,
@@ -735,59 +671,21 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
       ),
     });
   }
-  if (wantsMarkdown || wantsText) {
-    return c.text(
-      renderPosterMarkdown({
-        brand: result.brand,
-        posterType: result.posterType,
-        typeReference: result.typeReference,
-        publicPageUrl,
-        jsonUrl,
-        markdownUrl,
-        textUrl,
-      }),
-      200,
-      {
-        "Content-Type": wantsText
-          ? "text/plain; charset=utf-8"
-          : "text/markdown; charset=utf-8",
-      },
-    );
-  }
-  if (wantsInlineHtml) {
-    const logoDataUri = await imageUrlToDataUri({
-      url: result.brand.logoUrl,
-      env: c.env,
-      publicBaseUrl: base,
-    });
-    const brandReferenceBoardDataUri = await imageUrlToDataUri({
-      url: result.brand.brandReferenceBoardUrl,
-      env: c.env,
-      publicBaseUrl: base,
-    });
-    const posterReferenceDataUri = await imageUrlToDataUri({
-      url: result.typeReference?.productionReferenceImageUrl ?? null,
-      env: c.env,
-      publicBaseUrl: base,
-    });
-    return c.html(
-      renderPosterPage({
-        brand: result.brand,
-        posterType: result.posterType,
-        typeReference: result.typeReference,
-        publicPageUrl,
-        jsonUrl,
-        markdownUrl,
-        textUrl,
-        inlineHtmlUrl,
-        embeddedImages: {
-          logoDataUri,
-          brandReferenceBoardDataUri,
-          posterReferenceDataUri,
-        },
-      }),
-    );
-  }
+  const logoBase64 = await imageUrlToBase64({
+    url: result.brand.logoUrl,
+    env: c.env,
+    publicBaseUrl: base,
+  });
+  const brandReferenceBoardBase64 = await imageUrlToBase64({
+    url: result.brand.brandReferenceBoardUrl,
+    env: c.env,
+    publicBaseUrl: base,
+  });
+  const posterReferenceBase64 = await imageUrlToBase64({
+    url: result.typeReference?.productionReferenceImageUrl ?? null,
+    env: c.env,
+    publicBaseUrl: base,
+  });
   return c.html(
     renderPosterPage({
       brand: result.brand,
@@ -795,9 +693,11 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
       typeReference: result.typeReference,
       publicPageUrl,
       jsonUrl,
-      markdownUrl,
-      textUrl,
-      inlineHtmlUrl,
+      imageBase64: {
+        logo: logoBase64,
+        brandReferenceBoard: brandReferenceBoardBase64,
+        posterReference: posterReferenceBase64,
+      },
     }),
   );
 });

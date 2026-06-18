@@ -30,11 +30,6 @@ function field(label: string, value: string | null): string {
   return `<div class="field"><dt>${escapeHtml(label)}</dt><dd>${value ? escapeHtml(value) : '<span class="muted">Not specified</span>'}</dd></div>`;
 }
 
-function markdownList(items: string[], empty = "None specified"): string {
-  if (!items.length) return empty;
-  return items.map((item) => `- ${item}`).join("\n");
-}
-
 function markdownColorPalette(brand: BusinessBrandSystem): string {
   return [
     `- Primary / main teal: ${brand.colors.primary}`,
@@ -57,122 +52,24 @@ export function buildFinalInstruction(
   return `Create one 9:16 Instagram story poster for ${brand.businessName}. Use this public page as the stable brand and design-system context. First check what is special, relevant, or useful today for the selected poster type: ${posterType}. If today has a festival, awareness day, clinic milestone, seasonal context, offer angle, review/social proof idea, or locally relevant topic, use that as the poster theme. Follow the brand colors, typography mood, logo reference, brand reference board, and ${referencePhrase}. Include the clinic name exactly: ${brand.businessName}. Include the phone number exactly: ${brand.phone}. Keep the design modern, clean, premium, readable on mobile, and suitable for a dental clinic. Do not create a crowded flyer or invent a new logo. If the logo, brand board, or reference image cannot be accessed, report the issue instead of generating.`;
 }
 
-export function renderPosterMarkdown(input: {
-  brand: BusinessBrandSystem;
-  posterType: PosterType;
-  typeReference: PosterTypeReference | null;
-  publicPageUrl: string;
-  jsonUrl: string;
-  markdownUrl: string;
-  textUrl: string;
-}): string {
-  const {
-    brand,
-    posterType,
-    typeReference,
-    publicPageUrl,
-    jsonUrl,
-    markdownUrl,
-    textUrl,
-  } = input;
-  const finalInstruction = buildFinalInstruction(
-    brand,
-    posterType,
-    typeReference,
-  );
-  const logoUrl = absoluteAssetUrl(brand.logoUrl, publicPageUrl);
-  const boardUrl = absoluteAssetUrl(
-    brand.brandReferenceBoardUrl,
-    publicPageUrl,
-  );
-  const referenceUrl = typeReference?.productionReferenceImageUrl
-    ? absoluteAssetUrl(typeReference.productionReferenceImageUrl, publicPageUrl)
-    : null;
+type ImageBase64Reference = {
+  url: string;
+  contentType: string;
+  byteLength: number;
+  base64: string;
+} | null;
 
-  return `# Poster Design Context: ${brand.businessName}
-
-This Markdown file is optimized for ChatGPT Scheduled Tasks. It contains the stable brand/design system and permanent visual references. There is no daily packet to upload.
-
-- Public HTML URL: ${publicPageUrl}
-- Public JSON URL: ${jsonUrl}
-- Public Markdown URL: ${markdownUrl}
-- Public TXT URL: ${textUrl}
-- Poster type: ${posterType}
-
-## Business
-
-- Business name: ${brand.businessName}
-- Phone: ${brand.phone}
-- Website: ${brand.websiteUrl ?? "Not specified"}
-
-## Logo Reference
-
-Use the logo as a reference. Do not invent or redesign a new logo.
-
-![${brand.businessName} logo](${logoUrl})
-
-Direct logo URL: ${logoUrl}
-
-## Brand Reference Board
-
-Use this as the permanent brand style reference.
-
-![${brand.businessName} brand reference board](${boardUrl})
-
-Direct brand reference board URL: ${boardUrl}
-
-## Brand Hex Palette
-
-Use these exact hex values as the design color system. These are written as text so the model does not have to infer colors only from images.
-
-${markdownColorPalette(brand)}
-
-## Image Color Guidance In Hex
-
-When interpreting the logo, brand board, and poster reference image, anchor the generated poster around these hex colors:
-
-${markdownColorPalette(brand)}
-
-Prefer mostly ${brand.colors.accent} or very light ${brand.colors.secondary} backgrounds, strong ${brand.colors.darkText} headline text, and ${brand.colors.primary} accents.
-
-## Typography
-
-- Heading style: ${brand.typography.headingStyle}
-- Body style: ${brand.typography.bodyStyle}
-- Font mood: ${brand.typography.fontMood}
-
-## Visual Style
-
-- Mood: ${brand.visualStyle.mood}
-- Layout: ${brand.visualStyle.layout}
-- Photo style: ${brand.visualStyle.photoStyle}
-
-## Default Poster Rules
-
-${markdownList(brand.defaultPosterRules)}
-
-## Avoid
-
-${markdownList(brand.visualStyle.avoid)}
-
-## Permanent Poster-Type Reference Image
-
-Use this as the stable visual reference for ${posterType} posters. It does not need to change daily.
-
-${
-  referenceUrl
-    ? `![Permanent ${posterType} poster reference image](${referenceUrl})
-
-Direct poster reference image URL: ${referenceUrl}
-
-Reference notes: ${typeReference?.notes ?? "None specified"}`
-    : "Warning: No poster-type reference image is saved yet. Use the logo and brand board, and report that the poster-type reference image is missing if needed."
-}
-
-## Final ChatGPT Task Instruction
-
-${finalInstruction}
-`;
+function imageBase64Block(label: string, image: ImageBase64Reference): string {
+  if (!image) {
+    return `<p class="warning" role="alert">Warning: ${escapeHtml(label)} could not be converted to base64. Check that the source image URL is public and reachable.</p>`;
+  }
+  return `<dl>
+    ${field("Source URL", image.url)}
+    ${field("Content type", image.contentType)}
+    ${field("Byte length", String(image.byteLength))}
+  </dl>
+  <label class="base64-label">${escapeHtml(label)} base64</label>
+  <textarea class="base64" readonly spellcheck="false">${escapeHtml(image.base64)}</textarea>`;
 }
 
 export function renderPosterPage(input: {
@@ -181,13 +78,10 @@ export function renderPosterPage(input: {
   typeReference: PosterTypeReference | null;
   publicPageUrl: string;
   jsonUrl: string;
-  markdownUrl: string;
-  textUrl: string;
-  inlineHtmlUrl?: string;
-  embeddedImages?: {
-    logoDataUri?: string | null;
-    brandReferenceBoardDataUri?: string | null;
-    posterReferenceDataUri?: string | null;
+  imageBase64: {
+    logo: ImageBase64Reference;
+    brandReferenceBoard: ImageBase64Reference;
+    posterReference: ImageBase64Reference;
   };
 }): string {
   const {
@@ -196,10 +90,7 @@ export function renderPosterPage(input: {
     typeReference,
     publicPageUrl,
     jsonUrl,
-    markdownUrl,
-    textUrl,
-    inlineHtmlUrl,
-    embeddedImages,
+    imageBase64,
   } = input;
   const finalInstruction = buildFinalInstruction(
     brand,
@@ -214,9 +105,6 @@ export function renderPosterPage(input: {
   const referenceUrl = typeReference?.productionReferenceImageUrl
     ? absoluteAssetUrl(typeReference.productionReferenceImageUrl, publicPageUrl)
     : null;
-  const logoSrc = embeddedImages?.logoDataUri ?? logoUrl;
-  const boardSrc = embeddedImages?.brandReferenceBoardDataUri ?? boardUrl;
-  const referenceSrc = embeddedImages?.posterReferenceDataUri ?? referenceUrl;
   const colors = Object.entries(brand.colors)
     .map(
       ([name, hex]) => `
@@ -255,9 +143,9 @@ export function renderPosterPage(input: {
     .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 18px; }
     .card { padding: clamp(20px, 4vw, 32px); }
     .wide { grid-column: 1 / -1; }
-    .media { width: 100%; max-height: 640px; object-fit: contain; display: block; padding: 12px; background: #f7fbfb; border: 1px solid var(--line); border-radius: 14px; }
-    .logo { max-height: 220px; }
     .url { padding: 12px; background: #f7fbfb; border-radius: 10px; overflow-wrap: anywhere; font-size: .9rem; }
+    .base64-label { display: block; margin: 18px 0 8px; font-weight: 800; }
+    .base64 { width: 100%; min-height: 220px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #f7fbfb; color: var(--ink); font: .8rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; white-space: pre-wrap; overflow-wrap: anywhere; }
     .instruction { margin: 12px 0 0; padding: 18px; background: #113b3b; color: white; border-radius: 14px; font: 700 1.03rem/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
     .permanent { padding: 10px 14px; border-left: 4px solid var(--teal); background: var(--soft); font-weight: 750; }
     .warning { padding: 14px; border: 1px solid #f2c164; border-radius: 12px; background: #fff8e7; color: #754b00; font-weight: 700; }
@@ -287,13 +175,6 @@ export function renderPosterPage(input: {
       <div class="actions" aria-label="Copy context links and prompt">
         <button type="button" data-copy="${escapeHtml(publicPageUrl)}">Copy public page URL</button>
         <button type="button" data-copy="${escapeHtml(jsonUrl)}">Copy JSON URL</button>
-        <button type="button" data-copy="${escapeHtml(markdownUrl)}">Copy Markdown URL</button>
-        <button type="button" data-copy="${escapeHtml(textUrl)}">Copy TXT URL</button>
-        ${
-          inlineHtmlUrl
-            ? `<button type="button" data-copy="${escapeHtml(inlineHtmlUrl)}">Copy inline image URL</button>`
-            : ""
-        }
         <button type="button" data-copy="${escapeHtml(finalInstruction)}">Copy final ChatGPT task prompt</button>
         <noscript><a class="button" href="${escapeHtml(jsonUrl)}">Open JSON endpoint</a></noscript>
       </div>
@@ -302,9 +183,10 @@ export function renderPosterPage(input: {
     <div class="grid">
       <section class="card" aria-labelledby="business-info">
         <h2 id="business-info">1. Business Info</h2>
-        <img class="media logo" src="${escapeHtml(logoSrc)}" alt="${escapeHtml(brand.businessName)} logo reference">
-        <h3>Direct logo URL</h3>
+        <p class="permanent">Logo is provided below as base64 text so ChatGPT can read it from this page without fetching the image URL separately.</p>
         <p class="url"><a href="${escapeHtml(logoUrl)}">${escapeHtml(logoUrl)}</a></p>
+        ${imageBase64Block("Logo image", imageBase64.logo)}
+        <h3>Business details</h3>
         <dl>
           ${field("Business name", brand.businessName)}
           ${field("Phone", brand.phone)}
@@ -314,10 +196,9 @@ export function renderPosterPage(input: {
 
       <section class="card" aria-labelledby="brand-board">
         <h2 id="brand-board">2. Brand Reference Board</h2>
-        <p class="permanent">Use this as the permanent brand style reference.</p>
-        <img class="media" src="${escapeHtml(boardSrc)}" alt="${escapeHtml(brand.businessName)} permanent brand reference board">
-        <h3>Direct brand reference board URL</h3>
+        <p class="permanent">Use this as the permanent brand style reference. The image is provided as base64 text.</p>
         <p class="url"><a href="${escapeHtml(boardUrl)}">${escapeHtml(boardUrl)}</a></p>
+        ${imageBase64Block("Brand reference board image", imageBase64.brandReferenceBoard)}
       </section>
 
       <section class="card wide" aria-labelledby="brand-system">
@@ -346,12 +227,11 @@ export function renderPosterPage(input: {
 
       <section class="card wide" aria-labelledby="poster-reference">
         <h2 id="poster-reference">4. Poster Type Reference Image</h2>
-        <p class="permanent">Use this as the stable visual reference for ${escapeHtml(posterType)} posters. It does not need to change daily.</p>
+        <p class="permanent">Use this as the stable visual reference for ${escapeHtml(posterType)} posters. It does not need to change daily. The image is provided as base64 text.</p>
         ${
-          referenceUrl && referenceSrc
-            ? `<img class="media" src="${escapeHtml(referenceSrc)}" alt="Permanent ${escapeHtml(posterType)} poster reference image">
-               <h3>Direct poster reference image URL</h3>
-               <p class="url"><a href="${escapeHtml(referenceUrl)}">${escapeHtml(referenceUrl)}</a></p>
+          referenceUrl
+            ? `<p class="url"><a href="${escapeHtml(referenceUrl)}">${escapeHtml(referenceUrl)}</a></p>
+               ${imageBase64Block(`${posterType} poster reference image`, imageBase64.posterReference)}
                ${typeReference?.notes ? `<h3>Reference notes</h3><p>${escapeHtml(typeReference.notes)}</p>` : ""}`
             : `<p class="warning" role="alert">Warning: No poster-type reference image is saved yet. ChatGPT can still use the logo and brand board, but the visual reference section is missing.</p>`
         }
