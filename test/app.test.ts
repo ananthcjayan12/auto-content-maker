@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "../src/index";
+import { normalizeGenerationSettings } from "../src/gemini-models";
+import { imageGenerationConfig } from "../src/orchestrator";
+import { defaultPromptSettings } from "../src/prompt-settings";
 import type {
   Bindings,
   BusinessBrandSystem,
   DailyPosterPacket,
+  GenerationSettings,
   GeneratedPoster,
   PosterStore,
+  PosterPromptSettings,
   PosterType,
   PosterTypeReference,
 } from "../src/types";
@@ -15,6 +20,8 @@ class MemoryStore implements PosterStore {
   brands = new Map<string, BusinessBrandSystem>();
   packets = new Map<string, DailyPosterPacket>();
   typeReferences = new Map<string, PosterTypeReference>();
+  generationSettings = new Map<string, GenerationSettings>();
+  promptSettings = new Map<string, PosterPromptSettings>();
   generatedPosters = new Map<string, GeneratedPoster>();
 
   private packetKey(slug: string, type: PosterType, date: string) {
@@ -54,6 +61,26 @@ class MemoryStore implements PosterStore {
     return saved;
   }
 
+  async getGenerationSettings(slug: string) {
+    return this.generationSettings.get(slug) ?? null;
+  }
+
+  async upsertGenerationSettings(settings: GenerationSettings) {
+    const saved = { ...settings, updatedAt: new Date().toISOString() };
+    this.generationSettings.set(settings.businessSlug, saved);
+    return saved;
+  }
+
+  async getPromptSettings(slug: string) {
+    return this.promptSettings.get(slug) ?? null;
+  }
+
+  async upsertPromptSettings(settings: PosterPromptSettings) {
+    const saved = { ...settings, updatedAt: new Date().toISOString() };
+    this.promptSettings.set(settings.businessSlug, saved);
+    return saved;
+  }
+
   async getPacket(slug: string, type: PosterType, date: string) {
     return this.packets.get(this.packetKey(slug, type, date)) ?? null;
   }
@@ -69,6 +96,20 @@ class MemoryStore implements PosterStore {
 
   async getGeneratedPoster(slug: string, type: PosterType, date: string) {
     return this.generatedPosters.get(this.packetKey(slug, type, date)) ?? null;
+  }
+
+  async listGeneratedPosters(
+    slug: string,
+    options?: { posterType?: PosterType; limit?: number },
+  ) {
+    const posters = [...this.generatedPosters.values()]
+      .filter(
+        (poster) =>
+          poster.businessSlug === slug &&
+          (!options?.posterType || poster.posterType === options.posterType),
+      )
+      .sort((left, right) => right.date.localeCompare(left.date));
+    return posters.slice(0, options?.limit ?? 24);
   }
 
   async upsertGeneratedPoster(poster: GeneratedPoster) {
@@ -150,6 +191,7 @@ describe("daily poster packet worker", () => {
       businessSlug: brand.businessSlug,
       posterType: "awareness",
       productionReferenceImageUrl: "https://example.com/type-ref.jpg",
+      referenceImageUrls: ["https://example.com/type-ref.jpg"],
       notes: "Permanent awareness style reference",
     });
     env = {
@@ -170,6 +212,24 @@ describe("daily poster packet worker", () => {
     expect(
       todayInTimezone("Asia/Kolkata", new Date("2026-06-17T20:00:00.000Z")),
     ).toBe("2026-06-18");
+  });
+
+  it("uses model-specific Gemini image resolution configuration", () => {
+    expect(
+      imageGenerationConfig("gemini-3.1-flash-image", "4K", "9:16").imageConfig,
+    ).toEqual({ aspectRatio: "9:16", imageSize: "4K" });
+    expect(
+      imageGenerationConfig("gemini-2.5-flash-image", "4K", "9:16").imageConfig,
+    ).toEqual({ aspectRatio: "9:16" });
+    expect(
+      normalizeGenerationSettings({
+        businessSlug: brand.businessSlug,
+        textModel: "gemini-3.5-flash",
+        imageModel: "gemini-3-pro-image",
+        imageResolution: "512",
+        aspectRatio: "9:16",
+      }).imageResolution,
+    ).toBe("2K");
   });
 
   it("renders the business-select admin login on the homepage", async () => {
@@ -209,8 +269,12 @@ describe("daily poster packet worker", () => {
     expect(dashboardResponse.status).toBe(200);
     expect(dashboard).toContain("Poster admin dashboard");
     expect(dashboard).toContain("Save brand system");
-    expect(dashboard).toContain("Save type reference");
-    expect(dashboard).toContain("How daily generation works now");
+    expect(dashboard).toContain("Save reference images");
+    expect(dashboard).toContain("Save generation settings");
+    expect(dashboard).toContain("Editable generation prompts");
+    expect(dashboard).toContain("Daily generation flow");
+    expect(dashboard).toContain("Generation lab");
+    expect(dashboard).toContain("Generated image gallery");
   });
 
   it("rejects an invalid dashboard token", async () => {
@@ -230,7 +294,90 @@ describe("daily poster packet worker", () => {
     expect(await response.text()).toContain("Invalid business or admin token");
   });
 
-  it("uploads a poster-type reference image to R2 through the dashboard", async () => {
+  it("saves Gemini models and image resolution from the dashboard", async () => {
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const form = new FormData();
+    form.set("textModel", "gemini-3.1-pro-preview");
+    form.set("imageModel", "gemini-3-pro-image");
+    form.set("imageResolution", "4K");
+
+    const response = await app.request(
+      `/admin/${brand.businessSlug}/generation-settings`,
+      { method: "POST", headers: { Cookie: cookie }, body: form },
+      env,
+    );
+
+    expect(response.status).toBe(303);
+    expect(await store.getGenerationSettings(brand.businessSlug)).toMatchObject(
+      {
+        textModel: "gemini-3.1-pro-preview",
+        imageModel: "gemini-3-pro-image",
+        imageResolution: "4K",
+        aspectRatio: "9:16",
+      },
+    );
+  });
+
+  it("saves editable prompt templates from the dashboard", async () => {
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const defaults = defaultPromptSettings(brand.businessSlug);
+    const form = new FormData();
+    form.set("selectedPosterType", "awareness");
+    form.set(
+      "contentPromptTemplate",
+      "Custom content {{businessName}} {{posterTypePrompt}}",
+    );
+    form.set(
+      "masterImagePromptTemplate",
+      "Custom image {{businessName}} {{phone}}",
+    );
+    form.set("referencePromptTemplate", "Custom references {{posterType}}");
+    for (const [type, prompt] of Object.entries(defaults.posterTypePrompts)) {
+      form.set(
+        `posterTypePrompt_${type}`,
+        type === "offer" ? "Custom offer rules" : prompt,
+      );
+    }
+    const response = await app.request(
+      `/admin/${brand.businessSlug}/prompt-settings`,
+      { method: "POST", headers: { Cookie: cookie }, body: form },
+      env,
+    );
+    expect(response.status).toBe(303);
+    expect(await store.getPromptSettings(brand.businessSlug)).toMatchObject({
+      contentPromptTemplate:
+        "Custom content {{businessName}} {{posterTypePrompt}}",
+      masterImagePromptTemplate: "Custom image {{businessName}} {{phone}}",
+      referencePromptTemplate: "Custom references {{posterType}}",
+      posterTypePrompts: { offer: "Custom offer rules" },
+    });
+  });
+
+  it("uploads multiple poster-type reference images to R2 through the dashboard", async () => {
     const put = vi.fn().mockResolvedValue(undefined);
     env.ASSETS = { put } as unknown as R2Bucket;
     const loginResponse = await app.request(
@@ -250,9 +397,13 @@ describe("daily poster packet worker", () => {
     form.set("posterType", "awareness");
     form.set("date", today);
     form.set("notes", "A permanent awareness poster reference.");
-    form.set(
-      "typeReferenceFile",
+    form.append(
+      "typeReferenceFiles",
       new File(["png"], "reference.png", { type: "image/png" }),
+    );
+    form.append(
+      "typeReferenceFiles",
+      new File(["jpg"], "reference-two.jpg", { type: "image/jpeg" }),
     );
 
     const response = await app.request(
@@ -261,13 +412,15 @@ describe("daily poster packet worker", () => {
       env,
     );
     expect(response.status).toBe(303);
-    expect(put).toHaveBeenCalledOnce();
-    expect(
-      (await store.getTypeReference(brand.businessSlug, "awareness"))
-        ?.productionReferenceImageUrl,
-    ).toContain(
+    expect(put).toHaveBeenCalledTimes(2);
+    const savedReference = await store.getTypeReference(
+      brand.businessSlug,
+      "awareness",
+    );
+    expect(savedReference?.productionReferenceImageUrl).toContain(
       `/assets/businesses/${brand.businessSlug}/types/awareness/reference-`,
     );
+    expect(savedReference?.referenceImageUrls).toHaveLength(2);
   });
 
   it("saves ready daily packet content without duplicating a reference image", async () => {
@@ -366,6 +519,7 @@ describe("daily poster packet worker", () => {
       businessSlug: brand.businessSlug,
       posterType: "awareness",
       productionReferenceImageUrl: "https://poster.example.com/assets/ref.png",
+      referenceImageUrls: ["https://poster.example.com/assets/ref.png"],
       notes: "Permanent awareness style reference",
     });
     env.ASSETS = {
@@ -394,9 +548,10 @@ describe("daily poster packet worker", () => {
     expect(html).toContain("Brand reference board image base64");
     expect(html).toContain("awareness poster reference image base64");
     expect(html).toContain("iVBORw==");
-    expect(html).toContain("Final ChatGPT Task Instruction");
-    expect(html).toContain("First check what is special");
-    expect(html).toContain("Hex palette for LLM");
+    expect(html).not.toContain("Final ChatGPT Task Instruction");
+    expect(html).not.toContain("Default poster rules");
+    expect(html).not.toContain("Hex palette for LLM");
+    expect(html).not.toContain("Permanent awareness style reference");
     expect(html).toContain('content="noindex"');
     expect(env.ASSETS.get).toHaveBeenCalledTimes(3);
   });
@@ -409,28 +564,18 @@ describe("daily poster packet worker", () => {
       env,
     );
     const body = (await response.json()) as {
-      businessBrandSystem: BusinessBrandSystem;
+      business: Pick<BusinessBrandSystem, "businessSlug" | "businessName">;
       posterType: PosterType;
-      posterTypeReference: PosterTypeReference | null;
-      posterReferenceImageUrl: string | null;
+      posterReferenceImageUrls: string[];
       resolvedDate: string;
-      finalChatGPTInstruction: string;
-      brandHexPalette: BusinessBrandSystem["colors"];
-      imageColorGuidanceHex: BusinessBrandSystem["colors"];
     };
     expect(response.status).toBe(200);
-    expect(body.businessBrandSystem.businessSlug).toBe(brand.businessSlug);
+    expect(body.business.businessSlug).toBe(brand.businessSlug);
     expect(body.posterType).toBe("awareness");
-    expect(body.posterTypeReference?.productionReferenceImageUrl).toBe(
+    expect(body.posterReferenceImageUrls).toEqual([
       "https://example.com/type-ref.jpg",
-    );
-    expect(body.posterReferenceImageUrl).toBe(
-      "https://example.com/type-ref.jpg",
-    );
+    ]);
     expect(body.resolvedDate).toBe(today);
-    expect(body.brandHexPalette.primary).toBe("#0EA5A4");
-    expect(body.imageColorGuidanceHex.darkText).toBe("#123333");
-    expect(body.finalChatGPTInstruction).toContain("check what is special");
   });
 
   it("rejects a protected update without a token", async () => {
@@ -562,6 +707,7 @@ describe("daily poster packet worker", () => {
       businessSlug: brand.businessSlug,
       posterType: "awareness",
       productionReferenceImageUrl: "https://poster.example.com/assets/ref.png",
+      referenceImageUrls: ["https://poster.example.com/assets/ref.png"],
       notes: "Permanent awareness style reference",
     });
     const put = vi.fn().mockResolvedValue(undefined);
@@ -603,17 +749,18 @@ describe("daily poster packet worker", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            status: "completed",
-            steps: [
+            candidates: [
               {
-                type: "model_output",
-                content: [
-                  {
-                    type: "image",
-                    mime_type: "image/jpeg",
-                    data: "/9j/2w==",
-                  },
-                ],
+                content: {
+                  parts: [
+                    {
+                      inlineData: {
+                        mimeType: "image/jpeg",
+                        data: "/9j/2w==",
+                      },
+                    },
+                  ],
+                },
               },
             ],
           }),
@@ -649,20 +796,19 @@ describe("daily poster packet worker", () => {
     const imageCall = fetchMock.mock.calls[1];
     expect(imageCall).toBeDefined();
     const imageCallBody = JSON.parse(String(imageCall?.[1]?.body));
-    expect(String(imageCall?.[0])).toContain("/v1beta/interactions");
-    expect(imageCallBody.model).toBe("gemini-3.1-flash-image");
-    expect(imageCallBody.response_format.mime_type).toBe("image/jpeg");
-    expect(imageCallBody.response_format.image_size).toBe("1K");
-    expect(imageCallBody.response_format.aspect_ratio).toBe("9:16");
-    expect(imageCallBody.input).toHaveLength(7);
-    expect(JSON.stringify(imageCallBody.input)).toContain(
-      "REFERENCE IMAGE: Logo",
+    expect(String(imageCall?.[0])).toContain(
+      "/v1/models/gemini-3.1-flash-image:generateContent",
     );
-    expect(JSON.stringify(imageCallBody.input)).toContain(
-      "REFERENCE IMAGE: awareness poster style reference",
+    expect(imageCallBody.generationConfig).toBeUndefined();
+    expect(imageCallBody.contents[0].parts).toHaveLength(7);
+    expect(JSON.stringify(imageCallBody.contents[0].parts)).toContain(
+      "REFERENCE IMAGE: Original logo",
     );
-    expect(JSON.stringify(imageCallBody.input)).toContain(
-      "Highest-priority visual style reference",
+    expect(JSON.stringify(imageCallBody.contents[0].parts)).toContain(
+      "REFERENCE IMAGE: awareness poster style reference 1",
+    );
+    expect(JSON.stringify(imageCallBody.contents[0].parts)).toContain(
+      "follow the editable reference-image instructions",
     );
     expect(env.ASSETS.get).toHaveBeenCalledTimes(3);
     expect(put).toHaveBeenCalledOnce();
@@ -705,15 +851,168 @@ describe("daily poster packet worker", () => {
       model: string;
       dailyBrief: { angle: string };
       dailyBriefPrompt: string;
+      imagePrompt: string;
     };
 
     expect(response.status).toBe(200);
     expect(body.model).toBe("gemini-3.5-flash");
     expect(body.dailyBrief.angle).toBe("Monsoon dental care");
-    expect(body.dailyBriefPrompt).toContain(
-      "Check what is special, relevant, seasonal, or useful",
+    expect(body.dailyBriefPrompt).toContain("POSTER TYPE: DENTAL AWARENESS");
+    expect(body.imagePrompt).toContain(
+      "Create one complete 9:16 Instagram Story poster",
+    );
+    expect(body.imagePrompt).toContain(
+      "TODAY'S CONTENT — CHANGE ONLY THESE CONTENT AREAS",
     );
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("generates a dashboard brief, renders an image from the edited prompt, and reuses it as a reference", async () => {
+    store.brands.set(brand.businessSlug, {
+      ...brand,
+      logoUrl: "https://poster.example.com/assets/logo.png",
+      brandReferenceBoardUrl: "https://poster.example.com/assets/board.png",
+    });
+    store.typeReferences.set(`${brand.businessSlug}:awareness`, {
+      businessSlug: brand.businessSlug,
+      posterType: "awareness",
+      productionReferenceImageUrl: "https://poster.example.com/assets/ref.png",
+      referenceImageUrls: ["https://poster.example.com/assets/ref.png"],
+      notes: "Permanent awareness style reference",
+    });
+    env.GEMINI_API_KEY = "gemini-secret";
+    const put = vi.fn().mockResolvedValue(undefined);
+    env.ASSETS = {
+      get: vi.fn().mockResolvedValue({
+        arrayBuffer: vi
+          .fn()
+          .mockResolvedValue(new Uint8Array([137, 80, 78, 71]).buffer),
+        writeHttpMetadata: (headers: Headers) => {
+          headers.set("content-type", "image/png");
+        },
+      }),
+      put,
+    } as unknown as R2Bucket;
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        angle: "Monsoon dental care",
+                        headline: "Protect your smile this season",
+                      }),
+                    },
+                  ],
+                },
+              },
+            ],
+            usageMetadata: {
+              promptTokenCount: 1000,
+              candidatesTokenCount: 300,
+              totalTokenCount: 1300,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      inlineData: {
+                        mimeType: "image/jpeg",
+                        data: "/9j/2w==",
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+            usageMetadata: {
+              promptTokenCount: 2000,
+              candidatesTokenCount: 0,
+              totalTokenCount: 2000,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const briefForm = new FormData();
+    briefForm.set("posterType", "awareness");
+    briefForm.set("date", today);
+    const briefResponse = await app.request(
+      `/admin/${brand.businessSlug}/generation-lab/brief`,
+      { method: "POST", headers: { Cookie: cookie }, body: briefForm },
+      env,
+    );
+    const briefBody = (await briefResponse.json()) as { imagePrompt: string };
+    expect(briefResponse.status).toBe(200);
+    expect(briefBody.imagePrompt).toContain(brand.businessName);
+
+    const imageForm = new FormData();
+    imageForm.set("posterType", "awareness");
+    imageForm.set("date", today);
+    imageForm.set("prompt", `${briefBody.imagePrompt}\nExtra debug note.`);
+    imageForm.set(
+      "briefJson",
+      JSON.stringify({
+        angle: "Monsoon dental care",
+        headline: "Protect your smile this season",
+      }),
+    );
+    const imageResponse = await app.request(
+      `/admin/${brand.businessSlug}/generation-lab/image`,
+      { method: "POST", headers: { Cookie: cookie }, body: imageForm },
+      env,
+    );
+    const imageBody = (await imageResponse.json()) as {
+      generatedPoster: GeneratedPoster;
+    };
+    expect(imageResponse.status).toBe(200);
+    expect(imageBody.generatedPoster.status).toBe("ready");
+    expect(imageBody.generatedPoster.costBreakdown?.totalUsd).toBeGreaterThan(
+      0,
+    );
+
+    const referenceForm = new FormData();
+    referenceForm.set("posterType", "awareness");
+    referenceForm.set("date", today);
+    referenceForm.set("imageUrl", imageBody.generatedPoster.imageUrl ?? "");
+    const referenceResponse = await app.request(
+      `/admin/${brand.businessSlug}/generated-reference`,
+      { method: "POST", headers: { Cookie: cookie }, body: referenceForm },
+      env,
+    );
+    expect(referenceResponse.status).toBe(303);
+    expect(
+      (await store.getTypeReference(brand.businessSlug, "awareness"))
+        ?.referenceImageUrls,
+    ).toContain(imageBody.generatedPoster.imageUrl);
   });
 
   it("returns generated poster status through the protected API", async () => {
@@ -732,7 +1031,12 @@ describe("daily poster packet worker", () => {
       r2Key: "generated.png",
       geminiTextModel: "gemini-3.5-flash",
       geminiImageModel: "gemini-3.1-flash-image",
+      imageResolution: "1K",
+      aspectRatio: "9:16",
       geminiJobName: null,
+      briefUsage: null,
+      imageUsage: null,
+      costBreakdown: null,
       validationErrors: [],
       failureReason: null,
     });

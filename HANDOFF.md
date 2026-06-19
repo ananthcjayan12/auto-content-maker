@@ -81,6 +81,45 @@ npm test
 18 tests passed
 ```
 
+## 2026-06-19 dashboard generation settings update
+
+The admin dashboard now supports:
+
+- selecting the Gemini content-brief model
+- selecting the Gemini image-generation model
+- selecting a model-supported output resolution
+- uploading up to 14 poster-type reference images
+- retaining/removing individual references with checkboxes
+
+Settings are stored per business in `poster_generation_settings`.
+
+Reference URLs are stored in `poster_type_references.reference_image_urls_json`. The original `production_reference_image_url` remains populated with the first reference for backward compatibility.
+
+Supported content models:
+
+```text
+gemini-3.5-flash
+gemini-3.1-pro-preview
+gemini-3-flash-preview
+gemini-2.5-flash
+```
+
+Supported image models and resolutions:
+
+```text
+gemini-3.1-flash-image: 512, 1K, 2K, 4K
+gemini-3-pro-image: 1K, 2K, 4K
+gemini-2.5-flash-image: fixed approximately 1K
+```
+
+The Worker uses the official v1 `models/:model:generateContent` image endpoint. It sends `imageSize` only for Gemini 3 image models; Gemini 2.5 Flash Image receives only the 9:16 aspect ratio.
+
+Migration:
+
+```text
+migrations/0005_generation_settings_and_references.sql
+```
+
 ## Current objective
 
 This project publishes a public, read-only context page that ChatGPT Scheduled Tasks can open every day to generate a business poster.

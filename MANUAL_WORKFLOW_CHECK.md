@@ -159,6 +159,39 @@ Expected important fields:
 
 If `posterTypeReference.productionReferenceImageUrl` is `null`, upload the permanent awareness reference image from the admin dashboard before testing generation.
 
+Also confirm:
+
+```text
+generationSettings.textModel
+generationSettings.imageModel
+generationSettings.imageResolution
+posterTypeReference.referenceImageUrls
+```
+
+The `referenceImageUrls` array should contain every active reference uploaded for the selected poster type.
+
+## 4A. Confirm Dashboard Generation Settings
+
+Open the admin dashboard and verify:
+
+```text
+Content brief model
+Poster image model
+Poster resolution
+Multiple reference image upload
+Keep/remove checkboxes for existing references
+```
+
+Model-specific resolution behavior:
+
+```text
+Gemini 3.1 Flash Image: 512, 1K, 2K, 4K
+Gemini 3 Pro Image: 1K, 2K, 4K
+Gemini 2.5 Flash Image: fixed approximately 1K
+```
+
+Save a different valid selection, reload the dashboard, and confirm it remains selected.
+
 ## 5. Manually Trigger Poster Generation
 
 Set your admin token locally for convenience:
@@ -238,6 +271,8 @@ Expected success shape:
     "r2Key": "businesses/dr-poojas-smile-craft/generated/awareness/YYYY-MM-DD-RUNID.jpg",
     "geminiTextModel": "gemini-3.5-flash",
     "geminiImageModel": "gemini-3.1-flash-image",
+    "imageResolution": "1K",
+    "aspectRatio": "9:16",
     "validationErrors": [],
     "failureReason": null
   }

@@ -96,6 +96,7 @@ POSTER_ADMIN_TOKEN=use-a-long-random-secret
 GEMINI_API_KEY=
 GEMINI_TEXT_MODEL=gemini-3.5-flash
 GEMINI_IMAGE_MODEL=gemini-3.1-flash-image
+GEMINI_IMAGE_RESOLUTION=1K
 PUBLIC_BASE_URL=https://poster.yourdomain.com
 BUSINESS_TIMEZONE=Asia/Kolkata
 DEFAULT_BUSINESS_SLUG=dr-poojas-smile-craft
@@ -108,6 +109,7 @@ R2_PUBLIC_BASE_URL=
 - `GEMINI_API_KEY` is required for automated generation.
 - `GEMINI_TEXT_MODEL` defaults to `gemini-3.5-flash`.
 - `GEMINI_IMAGE_MODEL` defaults to `gemini-3.1-flash-image` and requests 1K output.
+- `GEMINI_IMAGE_RESOLUTION` is the fallback for businesses without saved dashboard settings.
 - `PUBLIC_BASE_URL` is used to build canonical public, JSON, and Markdown URLs.
 - `BUSINESS_TIMEZONE` defaults to `Asia/Kolkata`.
 - `DEFAULT_BUSINESS_SLUG` and `DEFAULT_POSTER_TYPE` control what the Cron trigger generates.
@@ -168,8 +170,20 @@ The workflow can create missing D1/R2 resources by name. Your Cloudflare API tok
 1. Open `/`.
 2. Select the business.
 3. Enter `POSTER_ADMIN_TOKEN`.
-4. Upload or update the logo, brand reference board, brand rules, and stable reference image per poster type.
-5. Open the public context URL and confirm the images render.
+4. Choose the content model, image model, and supported image resolution.
+5. Upload or update the logo, brand reference board, brand rules, and multiple stable reference images per poster type.
+6. Uncheck an existing reference and save to remove it from the active reference set.
+7. Open the public context URL and confirm the images render.
+
+Supported image settings:
+
+| Image model              | Dashboard resolutions    | Poster style references used       |
+| ------------------------ | ------------------------ | ---------------------------------- |
+| `gemini-3.1-flash-image` | `512`, `1K`, `2K`, `4K`  | Up to available model input limit  |
+| `gemini-3-pro-image`     | `1K`, `2K`, `4K`         | Up to 3 style references           |
+| `gemini-2.5-flash-image` | Fixed approximately `1K` | 1 style reference in this workflow |
+
+The dashboard filters resolution choices when the image model changes. The Worker validates and normalizes the saved settings again before calling Gemini.
 
 For Dr Pooja’s Smile Craft:
 

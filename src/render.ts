@@ -21,35 +21,8 @@ function absoluteAssetUrl(url: string, baseUrl: string): string {
   }
 }
 
-function list(items: string[], empty = "None specified"): string {
-  if (!items.length) return `<p class="muted">${escapeHtml(empty)}</p>`;
-  return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
-}
-
 function field(label: string, value: string | null): string {
   return `<div class="field"><dt>${escapeHtml(label)}</dt><dd>${value ? escapeHtml(value) : '<span class="muted">Not specified</span>'}</dd></div>`;
-}
-
-function markdownColorPalette(brand: BusinessBrandSystem): string {
-  return [
-    `- Primary / main teal: ${brand.colors.primary}`,
-    `- Secondary / pale aqua or cream background: ${brand.colors.secondary}`,
-    `- Accent / clean white: ${brand.colors.accent}`,
-    `- Dark text / headline navy: ${brand.colors.darkText}`,
-    `- Muted supporting text: ${brand.colors.mutedText}`,
-  ].join("\n");
-}
-
-export function buildFinalInstruction(
-  brand: BusinessBrandSystem,
-  posterType: PosterType,
-  typeReference?: PosterTypeReference | null,
-): string {
-  const referencePhrase = typeReference?.productionReferenceImageUrl
-    ? `the permanent ${posterType} poster reference image`
-    : "the poster reference image if it is available";
-
-  return `Create one 9:16 Instagram story poster for ${brand.businessName}. Use this public page as the stable brand and design-system context. First check what is special, relevant, or useful today for the selected poster type: ${posterType}. If today has a festival, awareness day, clinic milestone, seasonal context, offer angle, review/social proof idea, or locally relevant topic, use that as the poster theme. Follow the brand colors, typography mood, logo reference, brand reference board, and ${referencePhrase}. Include the clinic name exactly: ${brand.businessName}. Include the phone number exactly: ${brand.phone}. Keep the design modern, clean, premium, readable on mobile, and suitable for a dental clinic. Do not create a crowded flyer or invent a new logo. If the logo, brand board, or reference image cannot be accessed, report the issue instead of generating.`;
 }
 
 type ImageBase64Reference = {
@@ -81,7 +54,7 @@ export function renderPosterPage(input: {
   imageBase64: {
     logo: ImageBase64Reference;
     brandReferenceBoard: ImageBase64Reference;
-    posterReference: ImageBase64Reference;
+    posterReferences: ImageBase64Reference[];
   };
 }): string {
   const {
@@ -92,28 +65,18 @@ export function renderPosterPage(input: {
     jsonUrl,
     imageBase64,
   } = input;
-  const finalInstruction = buildFinalInstruction(
-    brand,
-    posterType,
-    typeReference,
-  );
   const logoUrl = absoluteAssetUrl(brand.logoUrl, publicPageUrl);
   const boardUrl = absoluteAssetUrl(
     brand.brandReferenceBoardUrl,
     publicPageUrl,
   );
-  const referenceUrl = typeReference?.productionReferenceImageUrl
-    ? absoluteAssetUrl(typeReference.productionReferenceImageUrl, publicPageUrl)
-    : null;
-  const colors = Object.entries(brand.colors)
-    .map(
-      ([name, hex]) => `
-        <div class="color">
-          <span class="swatch" style="background:${escapeHtml(hex)}"></span>
-          <span><strong>${escapeHtml(name)}</strong><code>${escapeHtml(hex)}</code></span>
-        </div>`,
-    )
-    .join("");
+  const referenceUrls = (
+    typeReference?.referenceImageUrls.length
+      ? typeReference.referenceImageUrls
+      : typeReference?.productionReferenceImageUrl
+        ? [typeReference.productionReferenceImageUrl]
+        : []
+  ).map((url) => absoluteAssetUrl(url, publicPageUrl));
 
   return `<!doctype html>
 <html lang="en">
@@ -123,7 +86,7 @@ export function renderPosterPage(input: {
   <meta name="robots" content="noindex">
   <title>Poster Design Context — ${escapeHtml(brand.businessName)}</title>
   <style>
-    :root { --teal: ${escapeHtml(brand.colors.primary)}; --ink: ${escapeHtml(brand.colors.darkText)}; --muted: ${escapeHtml(brand.colors.mutedText)}; --cream: ${escapeHtml(brand.colors.secondary)}; --line: #dce8e7; --soft: #f5fbfa; }
+    :root { --teal: #087c7b; --ink: #123333; --muted: #5f6f6f; --line: #dce8e7; --soft: #f5fbfa; }
     * { box-sizing: border-box; }
     body { margin: 0; color: var(--ink); background: #edf7f6; font: 16px/1.6 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     a { color: #087c7b; overflow-wrap: anywhere; }
@@ -172,10 +135,9 @@ export function renderPosterPage(input: {
         <span class="pill">Poster type: <strong>${escapeHtml(posterType)}</strong></span>
         <span class="pill">Stable daily task URL</span>
       </div>
-      <div class="actions" aria-label="Copy context links and prompt">
+      <div class="actions" aria-label="Copy context links">
         <button type="button" data-copy="${escapeHtml(publicPageUrl)}">Copy public page URL</button>
         <button type="button" data-copy="${escapeHtml(jsonUrl)}">Copy JSON URL</button>
-        <button type="button" data-copy="${escapeHtml(finalInstruction)}">Copy final ChatGPT task prompt</button>
         <noscript><a class="button" href="${escapeHtml(jsonUrl)}">Open JSON endpoint</a></noscript>
       </div>
     </header>
@@ -183,7 +145,7 @@ export function renderPosterPage(input: {
     <div class="grid">
       <section class="card" aria-labelledby="business-info">
         <h2 id="business-info">1. Business Info</h2>
-        <p class="permanent">Logo is provided below as base64 text so ChatGPT can read it from this page without fetching the image URL separately.</p>
+        <p class="permanent">Original logo asset encoded as base64 text.</p>
         <p class="url"><a href="${escapeHtml(logoUrl)}">${escapeHtml(logoUrl)}</a></p>
         ${imageBase64Block("Logo image", imageBase64.logo)}
         <h3>Business details</h3>
@@ -196,51 +158,26 @@ export function renderPosterPage(input: {
 
       <section class="card" aria-labelledby="brand-board">
         <h2 id="brand-board">2. Brand Reference Board</h2>
-        <p class="permanent">Use this as the permanent brand style reference. The image is provided as base64 text.</p>
+        <p class="permanent">Permanent brand reference-board asset encoded as base64 text.</p>
         <p class="url"><a href="${escapeHtml(boardUrl)}">${escapeHtml(boardUrl)}</a></p>
         ${imageBase64Block("Brand reference board image", imageBase64.brandReferenceBoard)}
       </section>
 
-      <section class="card wide" aria-labelledby="brand-system">
-        <h2 id="brand-system">3. Brand System</h2>
-        <h3>Color palette</h3>
-        <div class="palette">${colors}</div>
-        <h3>Hex palette for LLM</h3>
-        <p class="url">${escapeHtml(markdownColorPalette(brand))}</p>
-        <h3>Typography</h3>
-        <dl>
-          ${field("Heading style", brand.typography.headingStyle)}
-          ${field("Body style", brand.typography.bodyStyle)}
-          ${field("Font mood", brand.typography.fontMood)}
-        </dl>
-        <h3>Visual style instructions</h3>
-        <dl>
-          ${field("Mood", brand.visualStyle.mood)}
-          ${field("Layout", brand.visualStyle.layout)}
-          ${field("Photo style", brand.visualStyle.photoStyle)}
-        </dl>
-        <h3>Do — default poster rules</h3>
-        ${list(brand.defaultPosterRules)}
-        <h3>Don’t — avoid</h3>
-        ${list(brand.visualStyle.avoid)}
-      </section>
-
       <section class="card wide" aria-labelledby="poster-reference">
-        <h2 id="poster-reference">4. Poster Type Reference Image</h2>
-        <p class="permanent">Use this as the stable visual reference for ${escapeHtml(posterType)} posters. It does not need to change daily. The image is provided as base64 text.</p>
+        <h2 id="poster-reference">3. Poster Type Reference Images</h2>
+        <p class="permanent">Permanent ${escapeHtml(posterType)} reference assets encoded as base64 text.</p>
         ${
-          referenceUrl
-            ? `<p class="url"><a href="${escapeHtml(referenceUrl)}">${escapeHtml(referenceUrl)}</a></p>
-               ${imageBase64Block(`${posterType} poster reference image`, imageBase64.posterReference)}
-               ${typeReference?.notes ? `<h3>Reference notes</h3><p>${escapeHtml(typeReference.notes)}</p>` : ""}`
-            : `<p class="warning" role="alert">Warning: No poster-type reference image is saved yet. ChatGPT can still use the logo and brand board, but the visual reference section is missing.</p>`
+          referenceUrls.length
+            ? referenceUrls
+                .map(
+                  (referenceUrl, index) =>
+                    `<h3>Reference ${index + 1}</h3>
+                     <p class="url"><a href="${escapeHtml(referenceUrl)}">${escapeHtml(referenceUrl)}</a></p>
+                     ${imageBase64Block(`${posterType} poster reference image${referenceUrls.length > 1 ? ` ${index + 1}` : ""}`, imageBase64.posterReferences[index] ?? null)}`,
+                )
+                .join("")
+            : `<p class="warning" role="alert">Warning: No poster-type reference image is saved yet.</p>`
         }
-      </section>
-
-      <section class="card wide" aria-labelledby="final-instruction">
-        <h2 id="final-instruction">5. Final ChatGPT Task Instruction</h2>
-        <p>Use this instruction after reading and inspecting every section and image on this page.</p>
-        <pre class="instruction">${escapeHtml(finalInstruction)}</pre>
       </section>
     </div>
     <footer>Public read-only brand context page · No sensitive information should be stored here.</footer>

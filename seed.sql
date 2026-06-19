@@ -39,17 +39,35 @@ INSERT INTO poster_type_references (
   business_slug,
   poster_type,
   production_reference_image_url,
+  reference_image_urls_json,
   notes
 ) VALUES (
   'dr-poojas-smile-craft',
   'awareness',
   'https://placehold.co/1080x1920/E7F7F6/123333.png?text=Awareness+Poster+Reference',
+  '["https://placehold.co/1080x1920/E7F7F6/123333.png?text=Awareness+Poster+Reference"]',
   'Permanent awareness poster style reference image.'
 )
 ON CONFLICT(business_slug, poster_type) DO UPDATE SET
   production_reference_image_url = excluded.production_reference_image_url,
+  reference_image_urls_json = excluded.reference_image_urls_json,
   notes = excluded.notes,
   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
+
+INSERT INTO poster_generation_settings (
+  business_slug,
+  text_model,
+  image_model,
+  image_resolution,
+  aspect_ratio
+) VALUES (
+  'dr-poojas-smile-craft',
+  'gemini-3.5-flash',
+  'gemini-3.1-flash-image',
+  '1K',
+  '9:16'
+)
+ON CONFLICT(business_slug) DO NOTHING;
 
 INSERT INTO daily_poster_packets (
   business_slug,

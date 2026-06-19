@@ -1,11 +1,30 @@
 import { imageContentTypeForKey } from "./assets";
 import { DEFAULT_TIMEZONE, resolveDate, todayInTimezone } from "./date";
-import { buildFinalInstruction } from "./render";
+import { estimateGenerationCost, usageFromResponse } from "./gemini-pricing";
+import {
+  DEFAULT_GENERATION_SETTINGS,
+  IMAGE_MODEL_CAPABILITIES,
+  isImageModel,
+  isImageResolution,
+  isTextModel,
+  normalizeGenerationSettings,
+} from "./gemini-models";
+import {
+  defaultPromptSettings,
+  fillPromptTemplate,
+  normalizePromptSettings,
+  promptVariables,
+} from "./prompt-settings";
 import type {
   Bindings,
   BusinessBrandSystem,
+  GeminiUsage,
+  GenerationSettings,
   GeneratedPoster,
+  ImageModelId,
+  ImageResolution,
   PosterStore,
+  PosterPromptSettings,
   PosterType,
   PosterTypeReference,
 } from "./types";
@@ -94,8 +113,8 @@ function geminiEndpoint(model: string): string {
   return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 }
 
-function geminiInteractionsEndpoint(): string {
-  return "https://generativelanguage.googleapis.com/v1beta/interactions";
+function geminiImageEndpoint(model: ImageModelId): string {
+  return `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(model)}:generateContent`;
 }
 
 async function callGemini(input: {
@@ -135,39 +154,35 @@ async function callGemini(input: {
 
 async function callGeminiImageInteraction(input: {
   apiKey: string;
-  model: string;
+  model: ImageModelId;
+  resolution: ImageResolution;
+  aspectRatio: "9:16";
   prompt: string;
   references: LabeledImageReference[];
 }): Promise<Record<string, unknown>> {
-  const response = await fetch(geminiInteractionsEndpoint(), {
+  const parts = [
+    { text: input.prompt },
+    ...input.references.flatMap((reference) => [
+      {
+        text: `REFERENCE IMAGE: ${reference.label}. ${reference.guidance}`,
+      },
+      {
+        inline_data: {
+          data: reference.base64,
+          mime_type: reference.contentType,
+        },
+      },
+    ]),
+  ];
+
+  const response = await fetch(geminiImageEndpoint(input.model), {
     method: "POST",
     headers: {
-      "Api-Revision": "2026-05-20",
       "Content-Type": "application/json",
       "x-goog-api-key": input.apiKey,
     },
     body: JSON.stringify({
-      model: input.model,
-      input: [
-        { type: "text", text: input.prompt },
-        ...input.references.flatMap((reference) => [
-          {
-            type: "text",
-            text: `REFERENCE IMAGE: ${reference.label}. ${reference.guidance}`,
-          },
-          {
-            type: "image",
-            data: reference.base64,
-            mime_type: reference.contentType,
-          },
-        ]),
-      ],
-      response_format: {
-        type: "image",
-        mime_type: "image/jpeg",
-        aspect_ratio: "9:16",
-        image_size: "1K",
-      },
+      contents: [{ role: "user", parts }],
     }),
   });
   const text = await response.text();
@@ -190,6 +205,53 @@ async function callGeminiImageInteraction(input: {
     throw new Error(message);
   }
   return payload as Record<string, unknown>;
+}
+
+export function imageGenerationConfig(
+  model: ImageModelId,
+  resolution: ImageResolution,
+  aspectRatio: "9:16",
+): {
+  imageConfig: Record<string, string>;
+} {
+  const capability = IMAGE_MODEL_CAPABILITIES[model];
+  const imageConfig: Record<string, string> = { aspectRatio };
+  if (capability.configurableResolution) {
+    imageConfig.imageSize = capability.resolutions.includes(resolution)
+      ? resolution
+      : capability.defaultResolution;
+  }
+  return {
+    imageConfig,
+  };
+}
+
+function generationSettingsFor(
+  businessSlug: string,
+  env: Bindings,
+  saved: GenerationSettings | null,
+): GenerationSettings {
+  if (saved) return normalizeGenerationSettings(saved);
+  const textModel =
+    env.GEMINI_TEXT_MODEL && isTextModel(env.GEMINI_TEXT_MODEL)
+      ? env.GEMINI_TEXT_MODEL
+      : DEFAULT_GENERATION_SETTINGS.textModel;
+  const imageModel =
+    env.GEMINI_IMAGE_MODEL && isImageModel(env.GEMINI_IMAGE_MODEL)
+      ? env.GEMINI_IMAGE_MODEL
+      : DEFAULT_GENERATION_SETTINGS.imageModel;
+  const requestedResolution =
+    env.GEMINI_IMAGE_RESOLUTION &&
+    isImageResolution(env.GEMINI_IMAGE_RESOLUTION)
+      ? env.GEMINI_IMAGE_RESOLUTION
+      : DEFAULT_GENERATION_SETTINGS.imageResolution;
+  return normalizeGenerationSettings({
+    businessSlug,
+    textModel,
+    imageModel,
+    imageResolution: requestedResolution,
+    aspectRatio: "9:16",
+  });
 }
 
 function textParts(response: Record<string, unknown>): string[] {
@@ -344,36 +406,20 @@ function buildBriefPrompt(input: {
   typeReference: PosterTypeReference | null;
   date: string;
   contextJsonUrl: string;
+  promptSettings: PosterPromptSettings;
 }): string {
-  const { brand, posterType, typeReference, date, contextJsonUrl } = input;
-  return `You are planning a single daily Instagram story poster for a dental clinic in Kerala, India.
-
-Return only compact JSON with these keys:
-- angle: the best timely content angle for ${date}
-- headline: short poster headline
-- subheadline: one supporting line
-- requiredText: exact required text array
-- visualDirection: concise design direction
-- safetyNotes: dental/medical claims to avoid
-
-Strict output rules:
-- Return one valid JSON object only.
-- Do not wrap it in markdown.
-- Do not add text before or after the JSON.
-- Escape quotes inside strings.
-- Keep requiredText to 2-4 short lines so the final poster stays readable.
-
-Context JSON URL: ${contextJsonUrl}
-Business: ${brand.businessName}
-Phone: ${brand.phone}
-Poster type: ${posterType}
-Brand colors: ${JSON.stringify(brand.colors)}
-Typography: ${JSON.stringify(brand.typography)}
-Visual style: ${JSON.stringify(brand.visualStyle)}
-Default rules: ${brand.defaultPosterRules.join(" | ")}
-Poster reference notes: ${typeReference?.notes ?? "none"}
-
-  Check what is special, relevant, seasonal, or useful on ${date} in India/Kerala for a dental clinic. Prefer a practical dental awareness angle if there is no strong public event.`;
+  const { brand, posterType, typeReference, date, promptSettings } = input;
+  const posterTypePrompt = promptSettings.posterTypePrompts[posterType];
+  return fillPromptTemplate(
+    promptSettings.contentPromptTemplate,
+    promptVariables({
+      brand,
+      posterType,
+      date,
+      referenceNotes: typeReference?.notes,
+      posterTypePrompt,
+    }),
+  );
 }
 
 export async function generatePosterBrief(input: {
@@ -384,10 +430,12 @@ export async function generatePosterBrief(input: {
   typeReference: PosterTypeReference | null;
   date: string;
   contextJsonUrl: string;
+  promptSettings: PosterPromptSettings;
 }): Promise<{
   prompt: string;
   brief: Record<string, unknown>;
   rawText: string;
+  usage: GeminiUsage;
 }> {
   const prompt = buildBriefPrompt({
     brand: input.brand,
@@ -395,6 +443,7 @@ export async function generatePosterBrief(input: {
     typeReference: input.typeReference,
     date: input.date,
     contextJsonUrl: input.contextJsonUrl,
+    promptSettings: input.promptSettings,
   });
   const response = await callGemini({
     apiKey: input.apiKey,
@@ -409,10 +458,11 @@ export async function generatePosterBrief(input: {
     prompt,
     brief: jsonFromModelText(rawText),
     rawText,
+    usage: usageFromResponse(response),
   };
 }
 
-function buildImagePrompt(input: {
+export function buildImagePrompt(input: {
   brand: BusinessBrandSystem;
   posterType: PosterType;
   typeReference: PosterTypeReference | null;
@@ -420,51 +470,283 @@ function buildImagePrompt(input: {
   brief: Record<string, unknown>;
   contextUrl: string;
   runId: string;
+  settings: GenerationSettings;
+  promptSettings: PosterPromptSettings;
   force?: boolean;
 }): string {
-  const { brand, posterType, typeReference, date, brief, contextUrl, runId } =
+  const {
+    brand,
+    posterType,
+    typeReference,
+    date,
+    brief,
+    runId,
+    settings,
+    promptSettings,
+  } = input;
+  const variables = promptVariables({
+    brand,
+    posterType,
+    date,
+    referenceNotes: typeReference?.notes,
+    posterTypePrompt: promptSettings.posterTypePrompts[posterType],
+  });
+  const sections = [
+    fillPromptTemplate(promptSettings.masterImagePromptTemplate, variables),
+    fillPromptTemplate(promptSettings.posterTypePrompts[posterType], variables),
+    fillPromptTemplate(promptSettings.referencePromptTemplate, variables),
+    `TODAY'S CONTENT — CHANGE ONLY THESE CONTENT AREAS\n${JSON.stringify(brief, null, 2)}`,
+    `RENDER METADATA\nDate: ${date}\nGeneration run id: ${runId}\nOutput: ${settings.aspectRatio} at ${settings.imageResolution}`,
+  ];
+  return sections.join("\n\n");
+}
+
+async function generatePosterImage(input: {
+  env: Bindings;
+  store: PosterStore;
+  brand: BusinessBrandSystem;
+  businessSlug: string;
+  posterType: PosterType;
+  date: string;
+  base: string;
+  contextUrl: string;
+  contextJsonUrl: string;
+  typeReference: PosterTypeReference | null;
+  generationSettings: GenerationSettings;
+  prompt: string;
+  brief: Record<string, unknown>;
+  briefUsage: GeminiUsage | null;
+  started: GeneratedPoster;
+}): Promise<GeneratedPoster> {
+  const {
+    env,
+    store,
+    brand,
+    businessSlug,
+    posterType,
+    date,
+    base,
+    contextUrl,
+    contextJsonUrl,
+    typeReference,
+    generationSettings,
+    prompt,
+    brief,
+    briefUsage,
+    started,
+  } = input;
+  const imageModel = generationSettings.imageModel;
+  const referenceUrls = typeReference?.referenceImageUrls.length
+    ? typeReference.referenceImageUrls
+    : typeReference?.productionReferenceImageUrl
+      ? [typeReference.productionReferenceImageUrl]
+      : [];
+  const [logo, board, posterReferences] = await Promise.all([
+    imageUrlToBase64({ url: brand.logoUrl, env, publicBaseUrl: base }),
+    imageUrlToBase64({
+      url: brand.brandReferenceBoardUrl,
+      env,
+      publicBaseUrl: base,
+    }),
+    Promise.all(
+      referenceUrls.map((url) =>
+        imageUrlToBase64({ url, env, publicBaseUrl: base }),
+      ),
+    ),
+  ]);
+  const capability = IMAGE_MODEL_CAPABILITIES[imageModel];
+  const availableReferenceSlots = Math.max(
+    0,
+    capability.maxInputImages - Number(Boolean(logo)) - Number(Boolean(board)),
+  );
+  const styleReferenceLimit = Math.min(
+    capability.maxStyleReferences,
+    availableReferenceSlots,
+  );
+  const references: LabeledImageReference[] = [
+    logo
+      ? {
+          ...logo,
+          label: "Original logo",
+          guidance:
+            "Attached original logo image; follow the editable reference-image instructions in the prompt.",
+        }
+      : null,
+    board
+      ? {
+          ...board,
+          label: "Brand reference board",
+          guidance:
+            "Attached brand board; follow the editable reference-image instructions in the prompt.",
+        }
+      : null,
+    ...posterReferences
+      .filter((reference): reference is ImageBase64Reference =>
+        Boolean(reference),
+      )
+      .slice(0, styleReferenceLimit)
+      .map((reference, index) => ({
+        ...reference,
+        label: `${posterType} poster style reference ${index + 1}`,
+        guidance:
+          "Attached poster-type design reference; follow the editable reference-image instructions in the prompt.",
+      })),
+  ].filter((reference): reference is LabeledImageReference =>
+    Boolean(reference),
+  );
+
+  const imageResponse = await callGeminiImageInteraction({
+    apiKey: env.GEMINI_API_KEY!.trim(),
+    model: imageModel,
+    resolution: generationSettings.imageResolution,
+    aspectRatio: generationSettings.aspectRatio,
+    prompt,
+    references,
+  });
+  const imageUsage = usageFromResponse(imageResponse);
+  const costBreakdown = briefUsage
+    ? estimateGenerationCost({
+        textModel: generationSettings.textModel,
+        imageModel,
+        imageResolution: generationSettings.imageResolution,
+        briefUsage,
+        imageUsage,
+      })
+    : null;
+  const image = imagePart(imageResponse);
+  const validationErrors = validateGeneratedPoster({ brand, image, prompt });
+  if (validationErrors.length || !image) {
+    return store.upsertGeneratedPoster({
+      ...started,
+      status: "needs_review",
+      contextUrl,
+      contextJsonUrl,
+      angle: String(brief.angle ?? ""),
+      briefJson: JSON.stringify(brief),
+      prompt,
+      briefUsage,
+      imageUsage,
+      costBreakdown,
+      validationErrors,
+      failureReason: validationErrors.join(" "),
+    });
+  }
+
+  const extension = imageExtension(image.mimeType);
+  const runId = new Date().toISOString().replaceAll(/\D/g, "").slice(0, 17);
+  const r2Key = `businesses/${businessSlug}/generated/${posterType}/${date}-${runId}.${extension}`;
+  await env.ASSETS!.put(r2Key, base64ToArrayBuffer(image.data), {
+    httpMetadata: {
+      contentType: image.mimeType,
+      cacheControl: "public, max-age=31536000, immutable",
+    },
+  });
+  const imageUrl = env.R2_PUBLIC_BASE_URL
+    ? `${env.R2_PUBLIC_BASE_URL.replace(/\/+$/, "")}/${r2Key}`
+    : `${base}/assets/${r2Key}`;
+
+  return store.upsertGeneratedPoster({
+    ...started,
+    status: "ready",
+    contextUrl,
+    contextJsonUrl,
+    angle: String(brief.angle ?? ""),
+    briefJson: JSON.stringify(brief),
+    prompt,
+    imageUrl,
+    imageContentType: image.mimeType,
+    r2Key,
+    briefUsage,
+    imageUsage,
+    costBreakdown,
+    validationErrors: [],
+    failureReason: null,
+  });
+}
+
+export async function generatePosterImageFromPrompt(input: {
+  env: Bindings;
+  store: PosterStore;
+  businessSlug: string;
+  posterType: PosterType;
+  dateOrToday: string;
+  requestUrl: string;
+  prompt: string;
+  brief?: Record<string, unknown>;
+}): Promise<GeneratedPoster> {
+  const { env, store, businessSlug, posterType, dateOrToday, requestUrl } =
     input;
-  return `Create one complete 9:16 Instagram story poster image.
+  const timezone = env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE;
+  const date = resolveDate(dateOrToday, timezone) ?? todayInTimezone(timezone);
+  const base = baseUrl(requestUrl, env.PUBLIC_BASE_URL);
+  const contextUrl = `${base}/daily-poster/${businessSlug}/${posterType}/today`;
+  const contextJsonUrl = `${contextUrl}.json`;
+  if (!env.GEMINI_API_KEY?.trim()) {
+    throw new Error("GEMINI_API_KEY is not configured.");
+  }
+  if (!env.ASSETS) {
+    throw new Error("R2 asset storage is not configured.");
+  }
 
-Business: ${brand.businessName}
-Phone: ${brand.phone}
-Date: ${date}
-Poster type: ${posterType}
-Generation run id: ${runId}
-Context page: ${contextUrl}
-Brief JSON: ${JSON.stringify(brief)}
-
-Use the attached reference images with this priority:
-1. Poster type reference image: this is the main composition, typography, spacing, and styling reference. Closely follow its design language.
-2. Logo image: preserve the existing logo identity and place it as a small brand mark or lockup, not as a redesigned logo.
-3. Brand reference board: use only for brand feel if it is a real brand board; ignore it if it is a placeholder.
-
-Style-match requirements from the poster reference:
-- use a pale aqua or clean white background with premium clinical whitespace
-- use very large bold geometric sans-serif headline typography, deep navy for primary words and deep teal for emphasis
-- use controlled all-caps tracking for small label text where appropriate
-- use thin teal divider lines and small sparkle/star accents sparingly
-- use a rounded or organic photo card/mask with a clean white border
-- keep the layout structured like a premium social poster, not a generic AI flyer
-- do not use random fonts, decorative script, or mismatched typography unless the reference itself uses it for a small accent
-- do not drift into a different color palette or casual stock-template style
-
-Use exact brand colors: ${JSON.stringify(brand.colors)}. Typography mood: ${JSON.stringify(brand.typography)}. Visual style: ${JSON.stringify(brand.visualStyle)}.
-
-Required visible text exactly:
-${brand.businessName}
-${brand.phone}
-
-Design constraints:
-- 9:16 vertical Instagram story poster
-- clean, premium, modern dental clinic design
-- readable on mobile
-- high whitespace and strong hierarchy
-- do not make a crowded flyer
-- do not invent a new logo
-- avoid unsupported medical cure claims
-- create a fresh visual variant for this generation run; do not intentionally repeat a previous render pixel-for-pixel
-${typeReference?.productionReferenceImageUrl ? "- strongly follow the stable poster reference image for font weight, text hierarchy, spacing, divider treatment, photo mask shape, accent style, and overall premium teal/navy look" : ""}`;
+  const generationSettings = generationSettingsFor(
+    businessSlug,
+    env,
+    await store.getGenerationSettings(businessSlug),
+  );
+  const brand = await store.getBrand(businessSlug);
+  if (!brand) throw new Error("Business brand system not found.");
+  const typeReference = await store.getTypeReference(businessSlug, posterType);
+  const existing = await store.getGeneratedPoster(
+    businessSlug,
+    posterType,
+    date,
+  );
+  const started = await store.upsertGeneratedPoster({
+    businessSlug,
+    posterType,
+    date,
+    status: "processing",
+    contextUrl,
+    contextJsonUrl,
+    angle: existing?.angle ?? null,
+    briefJson: input.brief
+      ? JSON.stringify(input.brief)
+      : (existing?.briefJson ?? null),
+    prompt: input.prompt,
+    imageUrl: existing?.imageUrl ?? null,
+    imageContentType: existing?.imageContentType ?? null,
+    r2Key: existing?.r2Key ?? null,
+    geminiTextModel: generationSettings.textModel,
+    geminiImageModel: generationSettings.imageModel,
+    imageResolution: generationSettings.imageResolution,
+    aspectRatio: generationSettings.aspectRatio,
+    geminiJobName: null,
+    briefUsage: existing?.briefUsage ?? null,
+    imageUsage: null,
+    costBreakdown: null,
+    validationErrors: [],
+    failureReason: null,
+  });
+  const brief =
+    input.brief ??
+    (existing?.briefJson ? jsonFromModelText(existing.briefJson) : {});
+  return generatePosterImage({
+    env,
+    store,
+    brand,
+    businessSlug,
+    posterType,
+    date,
+    base,
+    contextUrl,
+    contextJsonUrl,
+    typeReference,
+    generationSettings,
+    prompt: input.prompt,
+    brief,
+    briefUsage: started.briefUsage,
+    started,
+  });
 }
 
 function imageExtension(contentType: string): string {
@@ -515,8 +797,17 @@ export async function runPosterOrchestrator(input: {
   const contextUrl = `${base}/daily-poster/${businessSlug}/${posterType}/today`;
   const contextJsonUrl = `${contextUrl}.json`;
   const apiKey = env.GEMINI_API_KEY?.trim();
-  const textModel = env.GEMINI_TEXT_MODEL || "gemini-3.5-flash";
-  const imageModel = env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
+  const generationSettings = generationSettingsFor(
+    businessSlug,
+    env,
+    await store.getGenerationSettings(businessSlug),
+  );
+  const promptSettings = normalizePromptSettings(
+    (await store.getPromptSettings(businessSlug)) ??
+      defaultPromptSettings(businessSlug),
+  );
+  const textModel = generationSettings.textModel;
+  const imageModel = generationSettings.imageModel;
   const runId = new Date().toISOString().replaceAll(/\D/g, "").slice(0, 17);
 
   const existing = await store.getGeneratedPoster(
@@ -545,7 +836,12 @@ export async function runPosterOrchestrator(input: {
     r2Key: null,
     geminiTextModel: textModel,
     geminiImageModel: imageModel,
+    imageResolution: generationSettings.imageResolution,
+    aspectRatio: generationSettings.aspectRatio,
     geminiJobName: null,
+    briefUsage: null,
+    imageUsage: null,
+    costBreakdown: null,
     validationErrors: [],
     failureReason: null,
   });
@@ -574,6 +870,7 @@ export async function runPosterOrchestrator(input: {
       typeReference,
       date,
       contextJsonUrl,
+      promptSettings,
     });
     const prompt = buildImagePrompt({
       brand,
@@ -583,94 +880,32 @@ export async function runPosterOrchestrator(input: {
       brief: briefResult.brief,
       contextUrl,
       runId,
+      settings: generationSettings,
+      promptSettings,
       force: input.force,
     });
-
-    const [logo, board, posterReference] = await Promise.all([
-      imageUrlToBase64({ url: brand.logoUrl, env, publicBaseUrl: base }),
-      imageUrlToBase64({
-        url: brand.brandReferenceBoardUrl,
-        env,
-        publicBaseUrl: base,
-      }),
-      imageUrlToBase64({
-        url: typeReference?.productionReferenceImageUrl ?? null,
-        env,
-        publicBaseUrl: base,
-      }),
-    ]);
-    const references: LabeledImageReference[] = [
-      logo
-        ? {
-            ...logo,
-            label: "Logo",
-            guidance:
-              "Use only as the clinic identity reference. Preserve it; do not redesign or invent a new logo.",
-          }
-        : null,
-      board
-        ? {
-            ...board,
-            label: "Brand reference board",
-            guidance:
-              "Use for overall brand colors and mood only. If it appears to be a placeholder, give it low priority.",
-          }
-        : null,
-      posterReference
-        ? {
-            ...posterReference,
-            label: `${posterType} poster style reference`,
-            guidance:
-              "Highest-priority visual style reference. Match its typography hierarchy, font weight, spacing, pale aqua background, teal/navy palette, rounded photo mask, thin divider lines, sparkle accents, and premium clinical poster composition.",
-          }
-        : null,
-    ].filter((reference): reference is LabeledImageReference =>
-      Boolean(reference),
-    );
-
-    const imageResponse = await callGeminiImageInteraction({
-      apiKey,
-      model: imageModel,
+    return generatePosterImage({
+      env,
+      store,
+      brand,
+      businessSlug,
+      posterType,
+      date,
+      base,
+      contextUrl,
+      contextJsonUrl,
+      typeReference,
+      generationSettings,
       prompt,
-      references,
-    });
-    const image = imagePart(imageResponse);
-    const validationErrors = validateGeneratedPoster({ brand, image, prompt });
-    if (validationErrors.length || !image) {
-      return store.upsertGeneratedPoster({
+      brief: briefResult.brief,
+      briefUsage: briefResult.usage,
+      started: {
         ...started,
-        status: "needs_review",
         angle: String(briefResult.brief.angle ?? ""),
         briefJson: JSON.stringify(briefResult.brief),
         prompt,
-        validationErrors,
-        failureReason: validationErrors.join(" "),
-      });
-    }
-
-    const extension = imageExtension(image.mimeType);
-    const r2Key = `businesses/${businessSlug}/generated/${posterType}/${date}-${runId}.${extension}`;
-    await env.ASSETS.put(r2Key, base64ToArrayBuffer(image.data), {
-      httpMetadata: {
-        contentType: image.mimeType,
-        cacheControl: "public, max-age=31536000, immutable",
+        briefUsage: briefResult.usage,
       },
-    });
-    const imageUrl = env.R2_PUBLIC_BASE_URL
-      ? `${env.R2_PUBLIC_BASE_URL.replace(/\/+$/, "")}/${r2Key}`
-      : `${base}/assets/${r2Key}`;
-
-    return store.upsertGeneratedPoster({
-      ...started,
-      status: "ready",
-      angle: String(briefResult.brief.angle ?? ""),
-      briefJson: JSON.stringify(briefResult.brief),
-      prompt,
-      imageUrl,
-      imageContentType: image.mimeType,
-      r2Key,
-      validationErrors: [],
-      failureReason: null,
     });
   } catch (error) {
     return store.upsertGeneratedPoster({
@@ -691,5 +926,3 @@ export function defaultScheduledTarget(env: Bindings): {
     posterType: env.DEFAULT_POSTER_TYPE || "awareness",
   };
 }
-
-export { buildFinalInstruction };

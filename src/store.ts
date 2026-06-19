@@ -1,11 +1,18 @@
 import type {
   BusinessBrandSystem,
+  CostBreakdown,
   DailyPosterPacket,
+  GenerationSettings,
+  GeminiUsage,
   GeneratedPoster,
   GeneratedPosterStatus,
+  ImageModelId,
+  ImageResolution,
   PosterStore,
+  PosterPromptSettings,
   PosterType,
   PosterTypeReference,
+  TextModelId,
 } from "./types";
 
 interface BrandRow {
@@ -47,7 +54,28 @@ interface TypeReferenceRow {
   business_slug: string;
   poster_type: PosterType;
   production_reference_image_url: string | null;
+  reference_image_urls_json: string;
   notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface GenerationSettingsRow {
+  business_slug: string;
+  text_model: TextModelId;
+  image_model: ImageModelId;
+  image_resolution: ImageResolution;
+  aspect_ratio: "9:16";
+  created_at: string;
+  updated_at: string;
+}
+
+interface PromptSettingsRow {
+  business_slug: string;
+  content_prompt_template: string;
+  master_image_prompt_template: string;
+  reference_prompt_template: string;
+  poster_type_prompts_json: string;
   created_at: string;
   updated_at: string;
 }
@@ -67,7 +95,12 @@ interface GeneratedPosterRow {
   r2_key: string | null;
   gemini_text_model: string | null;
   gemini_image_model: string | null;
+  image_resolution: ImageResolution | null;
+  aspect_ratio: "9:16" | null;
   gemini_job_name: string | null;
+  brief_usage_json: string | null;
+  image_usage_json: string | null;
+  cost_breakdown_json: string | null;
   validation_errors_json: string;
   failure_reason: string | null;
   created_at: string;
@@ -140,11 +173,46 @@ function mapPacket(row: PacketRow): DailyPosterPacket {
 }
 
 function mapTypeReference(row: TypeReferenceRow): PosterTypeReference {
+  const urls = parseJson<string[]>(row.reference_image_urls_json, []);
+  const referenceImageUrls =
+    urls.length > 0
+      ? urls
+      : row.production_reference_image_url
+        ? [row.production_reference_image_url]
+        : [];
   return {
     businessSlug: row.business_slug,
     posterType: row.poster_type,
     productionReferenceImageUrl: row.production_reference_image_url,
+    referenceImageUrls,
     notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapGenerationSettings(row: GenerationSettingsRow): GenerationSettings {
+  return {
+    businessSlug: row.business_slug,
+    textModel: row.text_model,
+    imageModel: row.image_model,
+    imageResolution: row.image_resolution,
+    aspectRatio: row.aspect_ratio,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapPromptSettings(row: PromptSettingsRow): PosterPromptSettings {
+  return {
+    businessSlug: row.business_slug,
+    contentPromptTemplate: row.content_prompt_template,
+    masterImagePromptTemplate: row.master_image_prompt_template,
+    referencePromptTemplate: row.reference_prompt_template,
+    posterTypePrompts: parseJson(
+      row.poster_type_prompts_json,
+      {} as PosterPromptSettings["posterTypePrompts"],
+    ),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -166,7 +234,21 @@ function mapGeneratedPoster(row: GeneratedPosterRow): GeneratedPoster {
     r2Key: row.r2_key,
     geminiTextModel: row.gemini_text_model,
     geminiImageModel: row.gemini_image_model,
+    imageResolution: row.image_resolution,
+    aspectRatio: row.aspect_ratio,
     geminiJobName: row.gemini_job_name,
+    briefUsage: parseJson<GeminiUsage | null>(
+      row.brief_usage_json ?? "null",
+      null,
+    ),
+    imageUsage: parseJson<GeminiUsage | null>(
+      row.image_usage_json ?? "null",
+      null,
+    ),
+    costBreakdown: parseJson<CostBreakdown | null>(
+      row.cost_breakdown_json ?? "null",
+      null,
+    ),
     validationErrors: parseJson(row.validation_errors_json, []),
     failureReason: row.failure_reason,
     createdAt: row.created_at,
@@ -252,10 +334,12 @@ export class D1PosterStore implements PosterStore {
     await this.db
       .prepare(
         `INSERT INTO poster_type_references (
-          business_slug, poster_type, production_reference_image_url, notes
-        ) VALUES (?, ?, ?, ?)
+          business_slug, poster_type, production_reference_image_url,
+          reference_image_urls_json, notes
+        ) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(business_slug, poster_type) DO UPDATE SET
           production_reference_image_url = excluded.production_reference_image_url,
+          reference_image_urls_json = excluded.reference_image_urls_json,
           notes = excluded.notes,
           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
       )
@@ -263,6 +347,7 @@ export class D1PosterStore implements PosterStore {
         reference.businessSlug,
         reference.posterType,
         reference.productionReferenceImageUrl,
+        JSON.stringify(reference.referenceImageUrls),
         reference.notes,
       )
       .run();
@@ -271,6 +356,86 @@ export class D1PosterStore implements PosterStore {
       reference.businessSlug,
       reference.posterType,
     ))!;
+  }
+
+  async getGenerationSettings(
+    businessSlug: string,
+  ): Promise<GenerationSettings | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT * FROM poster_generation_settings
+         WHERE business_slug = ?
+         LIMIT 1`,
+      )
+      .bind(businessSlug)
+      .first<GenerationSettingsRow>();
+    return row ? mapGenerationSettings(row) : null;
+  }
+
+  async upsertGenerationSettings(
+    settings: GenerationSettings,
+  ): Promise<GenerationSettings> {
+    await this.db
+      .prepare(
+        `INSERT INTO poster_generation_settings (
+          business_slug, text_model, image_model, image_resolution, aspect_ratio
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(business_slug) DO UPDATE SET
+          text_model = excluded.text_model,
+          image_model = excluded.image_model,
+          image_resolution = excluded.image_resolution,
+          aspect_ratio = excluded.aspect_ratio,
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+      )
+      .bind(
+        settings.businessSlug,
+        settings.textModel,
+        settings.imageModel,
+        settings.imageResolution,
+        settings.aspectRatio,
+      )
+      .run();
+
+    return (await this.getGenerationSettings(settings.businessSlug))!;
+  }
+
+  async getPromptSettings(
+    businessSlug: string,
+  ): Promise<PosterPromptSettings | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT * FROM poster_prompt_settings WHERE business_slug = ? LIMIT 1`,
+      )
+      .bind(businessSlug)
+      .first<PromptSettingsRow>();
+    return row ? mapPromptSettings(row) : null;
+  }
+
+  async upsertPromptSettings(
+    settings: PosterPromptSettings,
+  ): Promise<PosterPromptSettings> {
+    await this.db
+      .prepare(
+        `INSERT INTO poster_prompt_settings (
+          business_slug, content_prompt_template, master_image_prompt_template,
+          reference_prompt_template, poster_type_prompts_json
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(business_slug) DO UPDATE SET
+          content_prompt_template = excluded.content_prompt_template,
+          master_image_prompt_template = excluded.master_image_prompt_template,
+          reference_prompt_template = excluded.reference_prompt_template,
+          poster_type_prompts_json = excluded.poster_type_prompts_json,
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+      )
+      .bind(
+        settings.businessSlug,
+        settings.contentPromptTemplate,
+        settings.masterImagePromptTemplate,
+        settings.referencePromptTemplate,
+        JSON.stringify(settings.posterTypePrompts),
+      )
+      .run();
+    return (await this.getPromptSettings(settings.businessSlug))!;
   }
 
   async getPacket(
@@ -356,6 +521,35 @@ export class D1PosterStore implements PosterStore {
     return row ? mapGeneratedPoster(row) : null;
   }
 
+  async listGeneratedPosters(
+    businessSlug: string,
+    options?: { posterType?: PosterType; limit?: number },
+  ): Promise<GeneratedPoster[]> {
+    const limit = Math.max(1, Math.min(options?.limit ?? 24, 100));
+    if (options?.posterType) {
+      const result = await this.db
+        .prepare(
+          `SELECT * FROM generated_posters
+           WHERE business_slug = ? AND poster_type = ?
+           ORDER BY poster_date DESC, updated_at DESC
+           LIMIT ?`,
+        )
+        .bind(businessSlug, options.posterType, limit)
+        .all<GeneratedPosterRow>();
+      return (result.results ?? []).map(mapGeneratedPoster);
+    }
+    const result = await this.db
+      .prepare(
+        `SELECT * FROM generated_posters
+         WHERE business_slug = ?
+         ORDER BY poster_date DESC, updated_at DESC
+         LIMIT ?`,
+      )
+      .bind(businessSlug, limit)
+      .all<GeneratedPosterRow>();
+    return (result.results ?? []).map(mapGeneratedPoster);
+  }
+
   async upsertGeneratedPoster(
     poster: GeneratedPoster,
   ): Promise<GeneratedPoster> {
@@ -365,8 +559,10 @@ export class D1PosterStore implements PosterStore {
           business_slug, poster_type, poster_date, status, context_url,
           context_json_url, angle, brief_json, prompt, image_url,
           image_content_type, r2_key, gemini_text_model, gemini_image_model,
-          gemini_job_name, validation_errors_json, failure_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          image_resolution, aspect_ratio, gemini_job_name, brief_usage_json,
+          image_usage_json, cost_breakdown_json, validation_errors_json,
+          failure_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(business_slug, poster_type, poster_date) DO UPDATE SET
           status = excluded.status,
           context_url = excluded.context_url,
@@ -379,7 +575,12 @@ export class D1PosterStore implements PosterStore {
           r2_key = excluded.r2_key,
           gemini_text_model = excluded.gemini_text_model,
           gemini_image_model = excluded.gemini_image_model,
+          image_resolution = excluded.image_resolution,
+          aspect_ratio = excluded.aspect_ratio,
           gemini_job_name = excluded.gemini_job_name,
+          brief_usage_json = excluded.brief_usage_json,
+          image_usage_json = excluded.image_usage_json,
+          cost_breakdown_json = excluded.cost_breakdown_json,
           validation_errors_json = excluded.validation_errors_json,
           failure_reason = excluded.failure_reason,
           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
@@ -399,7 +600,12 @@ export class D1PosterStore implements PosterStore {
         poster.r2Key,
         poster.geminiTextModel,
         poster.geminiImageModel,
+        poster.imageResolution,
+        poster.aspectRatio,
         poster.geminiJobName,
+        poster.briefUsage ? JSON.stringify(poster.briefUsage) : null,
+        poster.imageUsage ? JSON.stringify(poster.imageUsage) : null,
+        poster.costBreakdown ? JSON.stringify(poster.costBreakdown) : null,
         JSON.stringify(poster.validationErrors),
         poster.failureReason,
       )

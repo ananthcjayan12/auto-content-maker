@@ -9,19 +9,34 @@ import {
 import { imageContentTypeForKey, isUploadedFile, uploadImage } from "./assets";
 import { applyDrPoojaSmileCraftPreset } from "./brand-presets";
 import {
-  buildFinalInstruction,
-  renderErrorPage,
-  renderPosterPage,
-} from "./render";
+  DEFAULT_GENERATION_SETTINGS,
+  isImageModel,
+  isImageResolution,
+  isTextModel,
+  normalizeGenerationSettings,
+} from "./gemini-models";
+import { renderErrorPage, renderPosterPage } from "./render";
 import {
   baseUrl,
   defaultScheduledTarget,
   generatePosterBrief,
+  generatePosterImageFromPrompt,
   imageUrlToBase64,
   runPosterOrchestrator,
+  buildImagePrompt,
 } from "./orchestrator";
 import { D1PosterStore } from "./store";
-import type { Bindings, PosterStore } from "./types";
+import {
+  defaultPromptSettings,
+  normalizePromptSettings,
+} from "./prompt-settings";
+import type {
+  Bindings,
+  GenerationSettings,
+  PosterStore,
+  PosterType,
+} from "./types";
+import { POSTER_TYPES } from "./types";
 import {
   isPosterType,
   isValidSlug,
@@ -52,7 +67,7 @@ function storeFor(env: Bindings): PosterStore {
 
 function jsonError(
   c: Context<{ Bindings: Bindings }>,
-  status: 400 | 401 | 404 | 500,
+  status: 400 | 401 | 403 | 404 | 500,
   error: string,
   details?: string[],
 ) {
@@ -95,6 +110,55 @@ function formLines(form: FormData, name: string): string[] {
     .split(/\r?\n/)
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+function formStrings(form: FormData, name: string): string[] {
+  return form
+    .getAll(name)
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function parseJsonText(
+  value: string,
+): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
+  if (!value.trim()) return { ok: true, value: {} };
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, error: "Brief JSON must be a JSON object." };
+    }
+    return { ok: true, value: parsed as Record<string, unknown> };
+  } catch {
+    return { ok: false, error: "Brief JSON must contain valid JSON." };
+  }
+}
+
+function defaultGenerationSettings(
+  businessSlug: string,
+  env: Bindings,
+): GenerationSettings {
+  const textModel =
+    env.GEMINI_TEXT_MODEL && isTextModel(env.GEMINI_TEXT_MODEL)
+      ? env.GEMINI_TEXT_MODEL
+      : DEFAULT_GENERATION_SETTINGS.textModel;
+  const imageModel =
+    env.GEMINI_IMAGE_MODEL && isImageModel(env.GEMINI_IMAGE_MODEL)
+      ? env.GEMINI_IMAGE_MODEL
+      : DEFAULT_GENERATION_SETTINGS.imageModel;
+  const imageResolution =
+    env.GEMINI_IMAGE_RESOLUTION &&
+    isImageResolution(env.GEMINI_IMAGE_RESOLUTION)
+      ? env.GEMINI_IMAGE_RESOLUTION
+      : DEFAULT_GENERATION_SETTINGS.imageResolution;
+  return normalizeGenerationSettings({
+    businessSlug,
+    textModel,
+    imageModel,
+    imageResolution,
+    aspectRatio: "9:16",
+  });
 }
 
 async function hasAdminAccess(
@@ -194,11 +258,31 @@ app.get("/admin/:businessSlug", async (c) => {
   const selectedDate =
     resolveDate(requestedDate, c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE) ??
     todayInTimezone(c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE);
-  const typeReference = await store.getTypeReference(businessSlug, posterType);
+  const [typeReference, savedGenerationSettings, savedPromptSettings] =
+    await Promise.all([
+      store.getTypeReference(businessSlug, posterType),
+      store.getGenerationSettings(businessSlug),
+      store.getPromptSettings(businessSlug),
+    ]);
+  const [generatedPoster, recentGeneratedPosters] = await Promise.all([
+    store.getGeneratedPoster(businessSlug, posterType, selectedDate),
+    store.listGeneratedPosters(businessSlug, {
+      posterType,
+      limit: 24,
+    }),
+  ]);
   return c.html(
     renderDashboard({
       brand,
       typeReference,
+      generatedPoster,
+      recentGeneratedPosters,
+      generationSettings:
+        savedGenerationSettings ??
+        defaultGenerationSettings(businessSlug, c.env),
+      promptSettings: normalizePromptSettings(
+        savedPromptSettings ?? defaultPromptSettings(businessSlug),
+      ),
       selectedType: posterType,
       selectedDate,
       publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
@@ -206,6 +290,115 @@ app.get("/admin/:businessSlug", async (c) => {
       error: c.req.query("error") || undefined,
     }),
   );
+});
+
+app.post("/admin/:businessSlug/generation-settings", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  if (!(await store.getBrand(businessSlug))) {
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  }
+
+  try {
+    const form = await c.req.formData();
+    const textModel = formString(form, "textModel");
+    const imageModel = formString(form, "imageModel");
+    const imageResolution = formString(form, "imageResolution");
+    if (!isTextModel(textModel)) {
+      return adminRedirect(c, businessSlug, {
+        error: "Unsupported Gemini text model.",
+      });
+    }
+    if (!isImageModel(imageModel)) {
+      return adminRedirect(c, businessSlug, {
+        error: "Unsupported Gemini image model.",
+      });
+    }
+    if (!isImageResolution(imageResolution)) {
+      return adminRedirect(c, businessSlug, {
+        error: "Unsupported image resolution.",
+      });
+    }
+
+    const normalized = normalizeGenerationSettings({
+      businessSlug,
+      textModel,
+      imageModel,
+      imageResolution,
+      aspectRatio: "9:16",
+    });
+    await store.upsertGenerationSettings(normalized);
+    return adminRedirect(c, businessSlug, {
+      message: "Generation models and resolution saved.",
+    });
+  } catch (error) {
+    return adminRedirect(c, businessSlug, {
+      error:
+        error instanceof Error
+          ? error.message
+          : "Generation settings update failed.",
+    });
+  }
+});
+
+app.post("/admin/:businessSlug/prompt-settings", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  if (!(await store.getBrand(businessSlug))) {
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  }
+  try {
+    const form = await c.req.formData();
+    const defaults = defaultPromptSettings(businessSlug);
+    const posterTypePrompts = Object.fromEntries(
+      POSTER_TYPES.map((type) => [
+        type,
+        formString(form, `posterTypePrompt_${type}`) ||
+          defaults.posterTypePrompts[type],
+      ]),
+    ) as typeof defaults.posterTypePrompts;
+    await store.upsertPromptSettings(
+      normalizePromptSettings({
+        businessSlug,
+        contentPromptTemplate: formString(form, "contentPromptTemplate"),
+        masterImagePromptTemplate: formString(
+          form,
+          "masterImagePromptTemplate",
+        ),
+        referencePromptTemplate: formString(form, "referencePromptTemplate"),
+        posterTypePrompts,
+      }),
+    );
+    return adminRedirect(c, businessSlug, {
+      posterType: formString(form, "selectedPosterType") || "awareness",
+      message: "Prompt templates saved.",
+    });
+  } catch (error) {
+    return adminRedirect(c, businessSlug, {
+      error:
+        error instanceof Error
+          ? error.message
+          : "Prompt settings update failed.",
+    });
+  }
 });
 
 app.post("/admin/:businessSlug/brand", async (c) => {
@@ -346,21 +539,45 @@ app.post("/admin/:businessSlug/type-reference", async (c) => {
         error: "Invalid poster type.",
       });
     }
-    const typeReferenceFile = form.get("typeReferenceFile");
-    let productionReferenceImageUrl =
-      formString(form, "productionReferenceImageUrl") || null;
-    if (isUploadedFile(typeReferenceFile)) {
-      productionReferenceImageUrl = await uploadImage({
-        env: c.env,
-        file: typeReferenceFile,
-        keyPrefix: `businesses/${businessSlug}/types/${posterType}/reference-${Date.now()}`,
-        publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
+    const existingReference = await store.getTypeReference(
+      businessSlug,
+      posterType,
+    );
+    const keepUrls = formStrings(form, "keepReferenceImageUrls");
+    const legacyFile = form.get("typeReferenceFile");
+    const uploadedFiles = [
+      ...form.getAll("typeReferenceFiles"),
+      ...(isUploadedFile(legacyFile) ? [legacyFile] : []),
+    ].filter(isUploadedFile);
+    const referenceImageUrls =
+      keepUrls.length > 0
+        ? [...keepUrls]
+        : uploadedFiles.length === 0
+          ? [...(existingReference?.referenceImageUrls ?? [])]
+          : [];
+    if (referenceImageUrls.length + uploadedFiles.length > 14) {
+      return adminRedirect(c, businessSlug, {
+        posterType,
+        date,
+        error: "A poster type can store at most 14 reference images.",
       });
+    }
+    const uploadStartedAt = Date.now();
+    for (const [index, file] of uploadedFiles.entries()) {
+      referenceImageUrls.push(
+        await uploadImage({
+          env: c.env,
+          file,
+          keyPrefix: `businesses/${businessSlug}/types/${posterType}/reference-${uploadStartedAt}-${index + 1}`,
+          publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
+        }),
+      );
     }
     await store.upsertTypeReference({
       businessSlug,
       posterType,
-      productionReferenceImageUrl,
+      productionReferenceImageUrl: referenceImageUrls[0] ?? null,
+      referenceImageUrls,
       notes: formString(form, "notes") || null,
     });
     return adminRedirect(c, businessSlug, {
@@ -378,6 +595,204 @@ app.post("/admin/:businessSlug/type-reference", async (c) => {
           : "Poster type reference update failed.",
     });
   }
+});
+
+app.post("/admin/:businessSlug/generation-lab/brief", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return jsonError(c, 403, "Admin session required.");
+  }
+  const form = await c.req.formData();
+  const posterType = formString(form, "posterType");
+  const date = formString(form, "date");
+  if (!isPosterType(posterType)) {
+    return jsonError(c, 400, "Invalid poster type.");
+  }
+  const resolvedDate = resolveDate(
+    date,
+    c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE,
+  );
+  if (!resolvedDate) {
+    return jsonError(c, 400, "Date must be today or a valid YYYY-MM-DD date.");
+  }
+  const apiKey = c.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) {
+    return jsonError(c, 500, "GEMINI_API_KEY is not configured.");
+  }
+  const store = storeFor(c.env);
+  const brand = await store.getBrand(businessSlug);
+  if (!brand) {
+    return jsonError(c, 404, "Business not found.");
+  }
+  const [typeReference, savedGenerationSettings, savedPromptSettings] =
+    await Promise.all([
+      store.getTypeReference(businessSlug, posterType),
+      store.getGenerationSettings(businessSlug),
+      store.getPromptSettings(businessSlug),
+    ]);
+  const generationSettings =
+    savedGenerationSettings ?? defaultGenerationSettings(businessSlug, c.env);
+  const promptSettings = normalizePromptSettings(
+    savedPromptSettings ?? defaultPromptSettings(businessSlug),
+  );
+  const base = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
+  const contextUrl = `${base}/daily-poster/${businessSlug}/${posterType}/today`;
+  const contextJsonUrl = `${contextUrl}.json`;
+  const brief = await generatePosterBrief({
+    apiKey,
+    model: generationSettings.textModel,
+    brand,
+    posterType,
+    typeReference,
+    date: resolvedDate,
+    contextJsonUrl,
+    promptSettings,
+  });
+  const imagePrompt = buildImagePrompt({
+    brand,
+    posterType,
+    typeReference,
+    date: resolvedDate,
+    brief: brief.brief,
+    contextUrl,
+    runId: new Date().toISOString().replaceAll(/\D/g, "").slice(0, 17),
+    settings: generationSettings,
+    promptSettings,
+  });
+  const savedGeneratedPoster = await store.upsertGeneratedPoster({
+    businessSlug,
+    posterType,
+    date: resolvedDate,
+    status: "pending",
+    contextUrl,
+    contextJsonUrl,
+    angle: String(brief.brief.angle ?? ""),
+    briefJson: JSON.stringify(brief.brief),
+    prompt: imagePrompt,
+    imageUrl: null,
+    imageContentType: null,
+    r2Key: null,
+    geminiTextModel: generationSettings.textModel,
+    geminiImageModel: generationSettings.imageModel,
+    imageResolution: generationSettings.imageResolution,
+    aspectRatio: generationSettings.aspectRatio,
+    geminiJobName: null,
+    briefUsage: brief.usage,
+    imageUsage: null,
+    costBreakdown: null,
+    validationErrors: [],
+    failureReason: null,
+  });
+  return c.json({
+    success: true,
+    date: resolvedDate,
+    posterType,
+    contextJsonUrl,
+    generationSettings,
+    dailyBriefPrompt: brief.prompt,
+    dailyBrief: brief.brief,
+    rawText: brief.rawText,
+    imagePrompt,
+    generatedPoster: savedGeneratedPoster,
+  });
+});
+
+app.post("/admin/:businessSlug/generation-lab/image", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return jsonError(c, 403, "Admin session required.");
+  }
+  const form = await c.req.formData();
+  const posterType = formString(form, "posterType");
+  const date = formString(form, "date");
+  const prompt = formString(form, "prompt");
+  const briefJson = formString(form, "briefJson");
+  if (!isPosterType(posterType)) {
+    return jsonError(c, 400, "Invalid poster type.");
+  }
+  if (!prompt) {
+    return jsonError(c, 400, "Prompt is required before generating the image.");
+  }
+  const parsedBrief = parseJsonText(briefJson);
+  if (!parsedBrief.ok) {
+    return jsonError(c, 400, parsedBrief.error);
+  }
+  try {
+    const generatedPoster = await generatePosterImageFromPrompt({
+      env: c.env,
+      store: storeFor(c.env),
+      businessSlug,
+      posterType,
+      dateOrToday: date,
+      requestUrl: c.req.url,
+      prompt,
+      brief: parsedBrief.value,
+    });
+    return c.json({ success: true, generatedPoster });
+  } catch (error) {
+    return jsonError(
+      c,
+      500,
+      error instanceof Error ? error.message : "Image generation failed.",
+    );
+  }
+});
+
+app.post("/admin/:businessSlug/generated-reference", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const form = await c.req.formData();
+  const posterType = formString(form, "posterType");
+  const date = formString(form, "date");
+  const imageUrl = formString(form, "imageUrl");
+  if (!isPosterType(posterType)) {
+    return adminRedirect(c, businessSlug, {
+      error: "Invalid poster type.",
+    });
+  }
+  if (!imageUrl) {
+    return adminRedirect(c, businessSlug, {
+      posterType,
+      date,
+      error: "Generated image URL is required.",
+    });
+  }
+  const store = storeFor(c.env);
+  const existingReference = await store.getTypeReference(
+    businessSlug,
+    posterType,
+  );
+  const referenceImageUrls = [...(existingReference?.referenceImageUrls ?? [])];
+  if (!referenceImageUrls.includes(imageUrl)) {
+    if (referenceImageUrls.length >= 14) {
+      return adminRedirect(c, businessSlug, {
+        posterType,
+        date,
+        error: "A poster type can store at most 14 reference images.",
+      });
+    }
+    referenceImageUrls.push(imageUrl);
+  }
+  await store.upsertTypeReference({
+    businessSlug,
+    posterType,
+    productionReferenceImageUrl:
+      existingReference?.productionReferenceImageUrl ??
+      referenceImageUrls[0] ??
+      null,
+    referenceImageUrls,
+    notes: existingReference?.notes ?? null,
+  });
+  return adminRedirect(c, businessSlug, {
+    posterType,
+    date,
+    message: "Generated image added to permanent references.",
+  });
 });
 
 app.post("/admin/:businessSlug/packet", async (c) => {
@@ -528,6 +943,8 @@ async function loadPublicContext(
       brand: Awaited<ReturnType<PosterStore["getBrand"]>> & {};
       posterType: Parameters<PosterStore["getTypeReference"]>[1];
       typeReference: Awaited<ReturnType<PosterStore["getTypeReference"]>>;
+      generationSettings: GenerationSettings;
+      promptSettings: ReturnType<typeof defaultPromptSettings>;
       resolvedDate: string;
     }
   | { error: string; status: 400 | 404 }
@@ -551,11 +968,23 @@ async function loadPublicContext(
   if (!brand) {
     return { error: "Business brand system not found.", status: 404 as const };
   }
-  const typeReference = await store.getTypeReference(
-    businessSlug,
-    posterTypeValue,
-  );
-  return { brand, posterType: posterTypeValue, typeReference, resolvedDate };
+  const [typeReference, savedGenerationSettings, savedPromptSettings] =
+    await Promise.all([
+      store.getTypeReference(businessSlug, posterTypeValue),
+      store.getGenerationSettings(businessSlug),
+      store.getPromptSettings(businessSlug),
+    ]);
+  return {
+    brand,
+    posterType: posterTypeValue,
+    typeReference,
+    generationSettings:
+      savedGenerationSettings ?? defaultGenerationSettings(businessSlug, env),
+    promptSettings: normalizePromptSettings(
+      savedPromptSettings ?? defaultPromptSettings(businessSlug),
+    ),
+    resolvedDate,
+  };
 }
 
 app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
@@ -587,22 +1016,27 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
   c.header("X-Robots-Tag", "noindex");
   c.header("Cache-Control", "public, max-age=300");
   if (wantsJson) {
+    const posterReferenceImageUrls = result.typeReference?.referenceImageUrls
+      .length
+      ? result.typeReference.referenceImageUrls
+      : result.typeReference?.productionReferenceImageUrl
+        ? [result.typeReference.productionReferenceImageUrl]
+        : [];
     return c.json({
-      businessBrandSystem: result.brand,
+      business: {
+        businessSlug: result.brand.businessSlug,
+        businessName: result.brand.businessName,
+        phone: result.brand.phone,
+        websiteUrl: result.brand.websiteUrl,
+        logoUrl: result.brand.logoUrl,
+        brandReferenceBoardUrl: result.brand.brandReferenceBoardUrl,
+      },
       posterType: result.posterType,
       resolvedDate: result.resolvedDate,
       publicPageUrl,
       jsonUrl,
-      posterTypeReference: result.typeReference,
-      posterReferenceImageUrl:
-        result.typeReference?.productionReferenceImageUrl ?? null,
-      brandHexPalette: result.brand.colors,
-      imageColorGuidanceHex: result.brand.colors,
-      finalChatGPTInstruction: buildFinalInstruction(
-        result.brand,
-        result.posterType,
-        result.typeReference,
-      ),
+      generationSettings: result.generationSettings,
+      posterReferenceImageUrls,
     });
   }
   const logoBase64 = await imageUrlToBase64({
@@ -615,11 +1049,20 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
     env: c.env,
     publicBaseUrl: base,
   });
-  const posterReferenceBase64 = await imageUrlToBase64({
-    url: result.typeReference?.productionReferenceImageUrl ?? null,
-    env: c.env,
-    publicBaseUrl: base,
-  });
+  const posterReferenceUrls = result.typeReference?.referenceImageUrls.length
+    ? result.typeReference.referenceImageUrls
+    : result.typeReference?.productionReferenceImageUrl
+      ? [result.typeReference.productionReferenceImageUrl]
+      : [];
+  const posterReferencesBase64 = await Promise.all(
+    posterReferenceUrls.map((url) =>
+      imageUrlToBase64({
+        url,
+        env: c.env,
+        publicBaseUrl: base,
+      }),
+    ),
+  );
   return c.html(
     renderPosterPage({
       brand: result.brand,
@@ -630,7 +1073,7 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
       imageBase64: {
         logo: logoBase64,
         brandReferenceBoard: brandReferenceBoardBase64,
-        posterReference: posterReferenceBase64,
+        posterReferences: posterReferencesBase64,
       },
     }),
   );
@@ -770,7 +1213,10 @@ app.post(
     const base = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
     const contextUrl = `${base}/daily-poster/${result.brand.businessSlug}/${result.posterType}/today`;
     const contextJsonUrl = `${contextUrl}.json`;
-    const model = c.env.GEMINI_TEXT_MODEL || "gemini-3.5-flash";
+    const generationSettings =
+      result.generationSettings ??
+      defaultGenerationSettings(result.brand.businessSlug, c.env);
+    const model = generationSettings.textModel;
     const brief = await generatePosterBrief({
       apiKey,
       model,
@@ -779,6 +1225,7 @@ app.post(
       typeReference: result.typeReference,
       date: result.resolvedDate,
       contextJsonUrl,
+      promptSettings: result.promptSettings,
     });
 
     return c.json({
@@ -791,6 +1238,17 @@ app.post(
       dailyBriefPrompt: brief.prompt,
       dailyBrief: brief.brief,
       rawText: brief.rawText,
+      imagePrompt: buildImagePrompt({
+        brand: result.brand,
+        posterType: result.posterType,
+        typeReference: result.typeReference,
+        date: result.resolvedDate,
+        brief: brief.brief,
+        contextUrl,
+        runId: new Date().toISOString().replaceAll(/\D/g, "").slice(0, 17),
+        settings: generationSettings,
+        promptSettings: result.promptSettings,
+      }),
     });
   },
 );

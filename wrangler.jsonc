@@ -9,6 +9,7 @@
     "BUSINESS_TIMEZONE": "Asia/Kolkata",
     "GEMINI_TEXT_MODEL": "gemini-3.5-flash",
     "GEMINI_IMAGE_MODEL": "gemini-3.1-flash-image",
+    "GEMINI_IMAGE_RESOLUTION": "1K",
     "DEFAULT_BUSINESS_SLUG": "dr-poojas-smile-craft",
     "DEFAULT_POSTER_TYPE": "awareness",
   },
