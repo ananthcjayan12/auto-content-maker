@@ -114,6 +114,9 @@ function updateWranglerConfig(d1Id) {
     ...config.vars,
     PUBLIC_BASE_URL: process.env.PUBLIC_BASE_URL,
     BUSINESS_TIMEZONE: process.env.BUSINESS_TIMEZONE?.trim() || "Asia/Kolkata",
+    ...(process.env.POSTER_FROM_EMAIL?.trim()
+      ? { POSTER_FROM_EMAIL: process.env.POSTER_FROM_EMAIL.trim() }
+      : {}),
     R2_BUCKET_NAME: r2BucketName,
     ...(process.env.R2_PUBLIC_BASE_URL?.trim()
       ? { R2_PUBLIC_BASE_URL: process.env.R2_PUBLIC_BASE_URL.trim() }

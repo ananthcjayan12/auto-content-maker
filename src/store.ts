@@ -1,4 +1,6 @@
 import type {
+  AutomationRun,
+  AutomationSettings,
   BusinessBrandSystem,
   ContentSourceSettings,
   CostBreakdown,
@@ -85,6 +87,31 @@ interface ContentSourceSettingsRow {
   business_slug: string;
   awareness_mode: "sheet_first" | "ai_only";
   google_sheet_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface AutomationSettingsRow {
+  business_slug: string;
+  enabled: number;
+  local_time: string;
+  poster_types_json: string;
+  force_generation: number;
+  email_enabled: number;
+  recipient_emails_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface AutomationRunRow {
+  business_slug: string;
+  poster_type: PosterType;
+  poster_date: string;
+  status: AutomationRun["status"];
+  delivery_status: AutomationRun["deliveryStatus"];
+  image_url: string | null;
+  provider_message_id: string | null;
+  error: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -234,6 +261,35 @@ function mapContentSourceSettings(
     businessSlug: row.business_slug,
     awarenessMode: row.awareness_mode,
     googleSheetUrl: row.google_sheet_url,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapAutomationSettings(row: AutomationSettingsRow): AutomationSettings {
+  return {
+    businessSlug: row.business_slug,
+    enabled: Boolean(row.enabled),
+    localTime: row.local_time,
+    posterTypes: parseJson<PosterType[]>(row.poster_types_json, ["awareness"]),
+    forceGeneration: Boolean(row.force_generation),
+    emailEnabled: Boolean(row.email_enabled),
+    recipientEmails: parseJson<string[]>(row.recipient_emails_json, []),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapAutomationRun(row: AutomationRunRow): AutomationRun {
+  return {
+    businessSlug: row.business_slug,
+    posterType: row.poster_type,
+    date: row.poster_date,
+    status: row.status,
+    deliveryStatus: row.delivery_status,
+    imageUrl: row.image_url,
+    providerMessageId: row.provider_message_id,
+    error: row.error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -450,6 +506,95 @@ export class D1PosterStore implements PosterStore {
       )
       .run();
     return (await this.getContentSourceSettings(settings.businessSlug))!;
+  }
+
+  async getAutomationSettings(
+    businessSlug: string,
+  ): Promise<AutomationSettings | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT * FROM poster_automation_settings WHERE business_slug = ? LIMIT 1",
+      )
+      .bind(businessSlug)
+      .first<AutomationSettingsRow>();
+    return row ? mapAutomationSettings(row) : null;
+  }
+
+  async upsertAutomationSettings(
+    settings: AutomationSettings,
+  ): Promise<AutomationSettings> {
+    await this.db
+      .prepare(
+        `INSERT INTO poster_automation_settings (
+          business_slug, enabled, local_time, poster_types_json,
+          force_generation, email_enabled, recipient_emails_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(business_slug) DO UPDATE SET
+          enabled = excluded.enabled,
+          local_time = excluded.local_time,
+          poster_types_json = excluded.poster_types_json,
+          force_generation = excluded.force_generation,
+          email_enabled = excluded.email_enabled,
+          recipient_emails_json = excluded.recipient_emails_json,
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+      )
+      .bind(
+        settings.businessSlug,
+        Number(settings.enabled),
+        settings.localTime,
+        JSON.stringify(settings.posterTypes),
+        Number(settings.forceGeneration),
+        Number(settings.emailEnabled),
+        JSON.stringify(settings.recipientEmails),
+      )
+      .run();
+    return (await this.getAutomationSettings(settings.businessSlug))!;
+  }
+
+  async claimAutomationRun(
+    businessSlug: string,
+    posterType: PosterType,
+    date: string,
+  ): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        `INSERT OR IGNORE INTO poster_automation_runs (
+          business_slug, poster_type, poster_date, status, delivery_status
+        ) VALUES (?, ?, ?, 'processing', 'pending')`,
+      )
+      .bind(businessSlug, posterType, date)
+      .run();
+    return (result.meta.changes ?? 0) > 0;
+  }
+
+  async updateAutomationRun(run: AutomationRun): Promise<AutomationRun> {
+    await this.db
+      .prepare(
+        `UPDATE poster_automation_runs SET
+          status = ?, delivery_status = ?, image_url = ?,
+          provider_message_id = ?, error = ?,
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE business_slug = ? AND poster_type = ? AND poster_date = ?`,
+      )
+      .bind(
+        run.status,
+        run.deliveryStatus,
+        run.imageUrl,
+        run.providerMessageId,
+        run.error,
+        run.businessSlug,
+        run.posterType,
+        run.date,
+      )
+      .run();
+    const row = await this.db
+      .prepare(
+        `SELECT * FROM poster_automation_runs
+         WHERE business_slug = ? AND poster_type = ? AND poster_date = ?`,
+      )
+      .bind(run.businessSlug, run.posterType, run.date)
+      .first<AutomationRunRow>();
+    return row ? mapAutomationRun(row) : run;
   }
 
   async getPromptSettings(

@@ -57,6 +57,14 @@ Google's `/export?format=csv` endpoint returned HTTP 400 for a valid shared shee
 
 Awareness lookups now record `contentSourceReason` as `matched`, `ai_only`, `sheet_not_configured`, `no_matching_row`, or `sheet_fetch_failed`. Missing rows and fetch failures still use the safe AI fallback, but the dashboard shows the exact warning and the reason is saved in the generated brief.
 
+## 2026-06-20 dashboard scheduling and Resend delivery
+
+The static daily Cron was replaced by a five-minute Cloudflare heartbeat (`*/5 * * * *`). D1 settings now control the business-local time, enabled poster types, one-time force behavior, email delivery, and recipients. `poster_automation_runs` claims each business/type/date once so heartbeat invocations cannot duplicate generation or scheduled email.
+
+Ready posters are delivered through Resend as an inline preview plus remote-URL attachment. The dashboard shows whether provider bindings are configured and includes a test-email action for the currently selected ready poster. Review is intentionally unavailable for unattended scheduling because it requires customer evidence.
+
+Migration: `0011_automation_and_delivery_settings.sql`.
+
 ## 2026-06-18 update: new Gemini orchestrator flow
 
 The direction changed from “ChatGPT Scheduled Task opens the public page and generates the poster inside ChatGPT” to the Worker-driven flow in `new_flow.md`.
@@ -108,7 +116,7 @@ New files/changes:
 - `src/types.ts` — `GeneratedPoster` types and Gemini/default bindings.
 - `src/store.ts` — D1 persistence for `generated_posters`.
 - `src/index.ts` — manual orchestration/status APIs plus Worker `scheduled` handler.
-- `wrangler.jsonc` — daily Cron trigger at `0 3 * * *` UTC, which is 08:30 Asia/Kolkata.
+- `wrangler.jsonc` — five-minute heartbeat Cron; the clinic-local schedule is stored in D1 and edited from the dashboard.
 - `test/app.test.ts` — mocked Gemini/R2 orchestration tests.
 
 Required new secret:

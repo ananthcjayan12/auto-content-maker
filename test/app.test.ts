@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "../src/index";
 import { normalizeGenerationSettings } from "../src/gemini-models";
+import { automationIsDue, runAutomationHeartbeat } from "../src/automation";
 import { imageGenerationConfig } from "../src/orchestrator";
 import { defaultPromptSettings } from "../src/prompt-settings";
 import type {
   Bindings,
+  AutomationRun,
+  AutomationSettings,
   BusinessBrandSystem,
   ContentSourceSettings,
   DailyPosterPacket,
@@ -28,6 +31,8 @@ class MemoryStore implements PosterStore {
   typeReferences = new Map<string, PosterTypeReference>();
   generationSettings = new Map<string, GenerationSettings>();
   contentSourceSettings = new Map<string, ContentSourceSettings>();
+  automationSettings = new Map<string, AutomationSettings>();
+  automationRuns = new Map<string, AutomationRun>();
   promptSettings = new Map<string, PosterPromptSettings>();
   generatedPosters = new Map<string, GeneratedPoster>();
 
@@ -85,6 +90,41 @@ class MemoryStore implements PosterStore {
   async upsertContentSourceSettings(settings: ContentSourceSettings) {
     const saved = { ...settings, updatedAt: new Date().toISOString() };
     this.contentSourceSettings.set(settings.businessSlug, saved);
+    return saved;
+  }
+
+  async getAutomationSettings(slug: string) {
+    return this.automationSettings.get(slug) ?? null;
+  }
+
+  async upsertAutomationSettings(settings: AutomationSettings) {
+    const saved = { ...settings, updatedAt: new Date().toISOString() };
+    this.automationSettings.set(settings.businessSlug, saved);
+    return saved;
+  }
+
+  async claimAutomationRun(slug: string, type: PosterType, date: string) {
+    const key = this.packetKey(slug, type, date);
+    if (this.automationRuns.has(key)) return false;
+    this.automationRuns.set(key, {
+      businessSlug: slug,
+      posterType: type,
+      date,
+      status: "processing",
+      deliveryStatus: "pending",
+      imageUrl: null,
+      providerMessageId: null,
+      error: null,
+    });
+    return true;
+  }
+
+  async updateAutomationRun(run: AutomationRun) {
+    const saved = { ...run, updatedAt: new Date().toISOString() };
+    this.automationRuns.set(
+      this.packetKey(run.businessSlug, run.posterType, run.date),
+      saved,
+    );
     return saved;
   }
 
@@ -247,6 +287,32 @@ describe("daily poster packet worker", () => {
         aspectRatio: "9:16",
       }).imageResolution,
     ).toBe("2K");
+  });
+
+  it("evaluates dashboard schedules in the business timezone", () => {
+    const settings: AutomationSettings = {
+      businessSlug: brand.businessSlug,
+      enabled: true,
+      localTime: "08:30",
+      posterTypes: ["awareness"],
+      forceGeneration: false,
+      emailEnabled: false,
+      recipientEmails: [],
+    };
+    expect(
+      automationIsDue(
+        settings,
+        "Asia/Kolkata",
+        new Date("2026-06-18T02:59:00.000Z"),
+      ),
+    ).toBe(false);
+    expect(
+      automationIsDue(
+        settings,
+        "Asia/Kolkata",
+        new Date("2026-06-18T03:00:00.000Z"),
+      ),
+    ).toBe(true);
   });
 
   it("finds today's row in a shared Google Sheet CSV", async () => {
@@ -450,6 +516,49 @@ describe("daily poster packet worker", () => {
       googleSheetUrl:
         "https://docs.google.com/spreadsheets/d/sheet-id/edit#gid=0",
     });
+  });
+
+  it("saves multi-type automation and email settings from the dashboard", async () => {
+    env.RESEND_API_KEY = "re_test";
+    env.POSTER_FROM_EMAIL = "Posters <posters@mail.example.com>";
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const form = new FormData();
+    form.set("enabled", "on");
+    form.set("localTime", "08:45");
+    form.append("posterTypes", "awareness");
+    form.append("posterTypes", "festival");
+    form.append("posterTypes", "review");
+    form.set("forceGeneration", "on");
+    form.set("emailEnabled", "on");
+    form.set("recipientEmails", "owner@example.com, manager@example.com");
+    const response = await app.request(
+      `/admin/${brand.businessSlug}/automation-settings`,
+      { method: "POST", headers: { Cookie: cookie }, body: form },
+      env,
+    );
+    expect(response.status).toBe(303);
+    expect(await store.getAutomationSettings(brand.businessSlug)).toMatchObject(
+      {
+        enabled: true,
+        localTime: "08:45",
+        posterTypes: ["awareness", "festival"],
+        forceGeneration: true,
+        emailEnabled: true,
+        recipientEmails: ["owner@example.com", "manager@example.com"],
+      },
+    );
   });
 
   it("saves editable prompt templates from the dashboard", async () => {
@@ -1353,6 +1462,84 @@ describe("daily poster packet worker", () => {
     expect(response.status).toBe(200);
     expect(body.generatedPoster.status).toBe("ready");
     expect(body.generatedPoster.angle).toBe("Daily dental awareness");
+  });
+
+  it("emails a ready scheduled poster once and records delivery", async () => {
+    const readyPoster: GeneratedPoster = {
+      businessSlug: brand.businessSlug,
+      posterType: "awareness",
+      date: today,
+      status: "ready",
+      contextUrl: "https://poster.example.com/daily-poster/context",
+      contextJsonUrl: "https://poster.example.com/daily-poster/context.json",
+      angle: "Daily dental awareness",
+      briefJson: "{}",
+      prompt: "Prompt",
+      imageUrl: "https://poster.example.com/assets/generated.png",
+      imageContentType: "image/png",
+      r2Key: "generated.png",
+      geminiTextModel: "gemini-3.5-flash",
+      geminiImageModel: "gemini-3.1-flash-image",
+      imageResolution: "1K",
+      aspectRatio: "9:16",
+      geminiJobName: null,
+      briefUsage: null,
+      imageUsage: null,
+      costBreakdown: null,
+      validationErrors: [],
+      failureReason: null,
+    };
+    await store.upsertGeneratedPoster(readyPoster);
+    await store.upsertAutomationSettings({
+      businessSlug: brand.businessSlug,
+      enabled: true,
+      localTime: "08:30",
+      posterTypes: ["awareness"],
+      forceGeneration: false,
+      emailEnabled: true,
+      recipientEmails: ["owner@example.com"],
+    });
+    env.RESEND_API_KEY = "re_test";
+    env.POSTER_FROM_EMAIL = "Posters <posters@mail.example.com>";
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: "email_123" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await runAutomationHeartbeat({
+      env,
+      store,
+      businessSlug: brand.businessSlug,
+      requestUrl: "https://poster.example.com/__scheduled",
+      now: new Date("2026-06-18T03:00:00.000Z"),
+    });
+    const second = await runAutomationHeartbeat({
+      env,
+      store,
+      businessSlug: brand.businessSlug,
+      requestUrl: "https://poster.example.com/__scheduled",
+      now: new Date("2026-06-18T03:05:00.000Z"),
+    });
+
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({
+      status: "ready",
+      deliveryStatus: "sent",
+      providerMessageId: "email_123",
+    });
+    expect(second).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const resendRequest = fetchMock.mock.calls[0];
+    expect(String(resendRequest?.[0])).toBe("https://api.resend.com/emails");
+    const resendBody = JSON.parse(String(resendRequest?.[1]?.body));
+    expect(resendBody.to).toEqual(["owner@example.com"]);
+    expect(resendBody.attachments[0]).toEqual({
+      path: readyPoster.imageUrl,
+      filename: `smile-craft-awareness-${today}.png`,
+    });
   });
 
   it("shows a warning when the production reference is missing", async () => {

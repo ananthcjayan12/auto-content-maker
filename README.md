@@ -109,6 +109,8 @@ GEMINI_API_KEY=
 GEMINI_TEXT_MODEL=gemini-3.5-flash
 GEMINI_IMAGE_MODEL=gemini-3.1-flash-image
 GEMINI_IMAGE_RESOLUTION=1K
+RESEND_API_KEY=
+POSTER_FROM_EMAIL=Posters <posters@mail.srshti.co.in>
 PUBLIC_BASE_URL=https://poster.yourdomain.com
 BUSINESS_TIMEZONE=Asia/Kolkata
 DEFAULT_BUSINESS_SLUG=dr-poojas-smile-craft
@@ -126,6 +128,8 @@ R2_PUBLIC_BASE_URL=
 - `BUSINESS_TIMEZONE` defaults to `Asia/Kolkata`.
 - `DEFAULT_BUSINESS_SLUG` and `DEFAULT_POSTER_TYPE` control what the Cron trigger generates.
 - `R2_PUBLIC_BASE_URL` is optional. Uploaded assets can also be served through this Worker at `/assets/...`.
+- `RESEND_API_KEY` enables scheduled and test email delivery. Store it as a Worker secret.
+- `POSTER_FROM_EMAIL` must use a domain or subdomain verified in Resend.
 
 Never commit `.dev.vars`.
 
@@ -137,6 +141,8 @@ The current migrations create:
 - `daily_poster_packets` — legacy/optional
 - `poster_type_references`
 - `generated_posters`
+- `poster_automation_settings`
+- `poster_automation_runs`
 
 The automated workflow mainly uses `business_brand_systems`, `poster_type_references`, `generated_posters`, and R2 assets.
 
@@ -164,6 +170,8 @@ Add these under **GitHub repository → Settings → Secrets and variables → A
 - `CLOUDFLARE_ACCOUNT_ID`
 - `POSTER_ADMIN_TOKEN`
 - `GEMINI_API_KEY`
+- `RESEND_API_KEY`
+- `POSTER_FROM_EMAIL`
 - `PUBLIC_BASE_URL`
 - `BUSINESS_TIMEZONE`
 - `DEFAULT_BUSINESS_SLUG` — optional; defaults to `dr-poojas-smile-craft`
@@ -175,7 +183,7 @@ Add these under **GitHub repository → Settings → Secrets and variables → A
 
 The workflow can create missing D1/R2 resources by name. Your Cloudflare API token must include Workers Scripts edit, D1 edit, and Workers R2 Storage write permissions.
 
-`POSTER_ADMIN_TOKEN` and `GEMINI_API_KEY` are written to Cloudflare Worker secrets by the deploy workflow from GitHub Actions secrets, so production deploys do not require running `wrangler secret put` locally.
+`POSTER_ADMIN_TOKEN`, `GEMINI_API_KEY`, and optional `RESEND_API_KEY` are written to Cloudflare Worker secrets by the deploy workflow from GitHub Actions secrets, so production deploys do not require running `wrangler secret put` locally.
 
 ## Admin dashboard workflow
 
@@ -273,7 +281,7 @@ curl "https://poster.yourdomain.com/api/generated-poster/dr-poojas-smile-craft/a
   -H "Authorization: Bearer $POSTER_ADMIN_TOKEN"
 ```
 
-The configured Cron trigger runs daily at `03:00 UTC`, which is `08:30` in Asia/Kolkata.
+The Cloudflare Cron runs every five minutes as a lightweight heartbeat. The admin dashboard stores the actual clinic-local schedule, selected poster types, force policy, recipients, and email-delivery state in D1. Each business/type/date is claimed once, preventing duplicate generation and scheduled email.
 
 ## Privacy and indexing
 

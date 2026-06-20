@@ -5,3 +5,6 @@ PUBLIC_BASE_URL=http://localhost:8787
 BUSINESS_TIMEZONE=Asia/Kolkata
 R2_BUCKET_NAME=
 R2_PUBLIC_BASE_URL=
+GEMINI_API_KEY=
+RESEND_API_KEY=
+POSTER_FROM_EMAIL=Posters <posters@mail.srshti.co.in>

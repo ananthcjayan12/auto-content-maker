@@ -31,6 +31,8 @@ env:
   BUSINESS_TIMEZONE: ${{ secrets.BUSINESS_TIMEZONE || 'Asia/Kolkata' }}
   R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME || 'daily-poster-packet-assets' }}
   R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+  RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+  POSTER_FROM_EMAIL: ${{ secrets.POSTER_FROM_EMAIL }}
 
 jobs:
   validate:
@@ -124,6 +126,7 @@ jobs:
         env:
           POSTER_ADMIN_TOKEN: ${{ secrets.POSTER_ADMIN_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: |
           for variable in POSTER_ADMIN_TOKEN GEMINI_API_KEY; do
             if [ -z "${!variable}" ]; then
@@ -133,6 +136,9 @@ jobs:
           done
           printf '%s' "$POSTER_ADMIN_TOKEN" | npx wrangler secret put POSTER_ADMIN_TOKEN
           printf '%s' "$GEMINI_API_KEY" | npx wrangler secret put GEMINI_API_KEY
+          if [ -n "$RESEND_API_KEY" ]; then
+            printf '%s' "$RESEND_API_KEY" | npx wrangler secret put RESEND_API_KEY
+          fi
 
       - name: Print deployment result
         run: |

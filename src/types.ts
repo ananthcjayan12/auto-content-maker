@@ -105,6 +105,38 @@ export interface ContentSourceSettings {
   updatedAt?: string;
 }
 
+export interface AutomationSettings {
+  businessSlug: string;
+  enabled: boolean;
+  localTime: string;
+  posterTypes: PosterType[];
+  forceGeneration: boolean;
+  emailEnabled: boolean;
+  recipientEmails: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type AutomationRunStatus =
+  | "processing"
+  | "ready"
+  | "failed"
+  | "needs_review";
+export type DeliveryStatus = "pending" | "sent" | "failed" | "skipped";
+
+export interface AutomationRun {
+  businessSlug: string;
+  posterType: PosterType;
+  date: string;
+  status: AutomationRunStatus;
+  deliveryStatus: DeliveryStatus;
+  imageUrl: string | null;
+  providerMessageId: string | null;
+  error: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface PosterPromptSettings {
   businessSlug: string;
   contentPromptTemplate: string;
@@ -188,6 +220,18 @@ export interface PosterStore {
   upsertContentSourceSettings(
     settings: ContentSourceSettings,
   ): Promise<ContentSourceSettings>;
+  getAutomationSettings(
+    businessSlug: string,
+  ): Promise<AutomationSettings | null>;
+  upsertAutomationSettings(
+    settings: AutomationSettings,
+  ): Promise<AutomationSettings>;
+  claimAutomationRun(
+    businessSlug: string,
+    posterType: PosterType,
+    date: string,
+  ): Promise<boolean>;
+  updateAutomationRun(run: AutomationRun): Promise<AutomationRun>;
   getPromptSettings(businessSlug: string): Promise<PosterPromptSettings | null>;
   upsertPromptSettings(
     settings: PosterPromptSettings,
@@ -224,5 +268,7 @@ export interface Bindings {
   BUSINESS_TIMEZONE?: string;
   R2_BUCKET_NAME?: string;
   R2_PUBLIC_BASE_URL?: string;
+  RESEND_API_KEY?: string;
+  POSTER_FROM_EMAIL?: string;
   TEST_STORE?: PosterStore;
 }

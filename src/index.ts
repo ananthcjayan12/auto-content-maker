@@ -7,6 +7,13 @@ import {
   setAdminSession,
 } from "./admin-session";
 import { imageContentTypeForKey, isUploadedFile, uploadImage } from "./assets";
+import {
+  AUTOMATABLE_POSTER_TYPES,
+  defaultAutomationSettings,
+  isValidLocalTime,
+  runAutomationHeartbeat,
+  sendPosterEmail,
+} from "./automation";
 import { applyDrPoojaSmileCraftPreset } from "./brand-presets";
 import {
   defaultContentSourceSettings,
@@ -267,10 +274,12 @@ app.get("/admin/:businessSlug", async (c) => {
     savedGenerationSettings,
     savedPromptSettings,
     savedContentSourceSettings,
+    savedAutomationSettings,
   ] = await Promise.all([
     store.getGenerationSettings(businessSlug),
     store.getPromptSettings(businessSlug),
     store.getContentSourceSettings(businessSlug),
+    store.getAutomationSettings(businessSlug),
   ]);
   const [generatedPoster, recentGeneratedPosters, typeReferences] =
     await Promise.all([
@@ -302,6 +311,12 @@ app.get("/admin/:businessSlug", async (c) => {
       contentSourceSettings:
         savedContentSourceSettings ??
         defaultContentSourceSettings(businessSlug),
+      automationSettings:
+        savedAutomationSettings ?? defaultAutomationSettings(businessSlug),
+      emailProviderConfigured: Boolean(
+        c.env.RESEND_API_KEY?.trim() && c.env.POSTER_FROM_EMAIL?.trim(),
+      ),
+      automationTimezone: c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE,
       selectedType: posterType,
       selectedDate,
       publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
@@ -309,6 +324,128 @@ app.get("/admin/:businessSlug", async (c) => {
       error: c.req.query("error") || undefined,
     }),
   );
+});
+
+app.post("/admin/:businessSlug/automation-settings", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const form = await c.req.formData();
+  const enabled = form.has("enabled");
+  const forceGeneration = form.has("forceGeneration");
+  const emailEnabled = form.has("emailEnabled");
+  const localTime = formString(form, "localTime");
+  const posterTypes = formStrings(form, "posterTypes").filter(
+    (value): value is PosterType =>
+      isPosterType(value) && AUTOMATABLE_POSTER_TYPES.includes(value),
+  );
+  const recipientEmails = formString(form, "recipientEmails")
+    .split(/[\s,;]+/)
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  if (!isValidLocalTime(localTime)) {
+    return adminRedirect(c, businessSlug, {
+      error: "Choose a valid local automation time.",
+    });
+  }
+  if (enabled && posterTypes.length === 0) {
+    return adminRedirect(c, businessSlug, {
+      error: "Choose at least one automatable poster type.",
+    });
+  }
+  if (
+    recipientEmails.some((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+  ) {
+    return adminRedirect(c, businessSlug, {
+      error: "Enter valid recipient email addresses.",
+    });
+  }
+  if (emailEnabled && recipientEmails.length === 0) {
+    return adminRedirect(c, businessSlug, {
+      error: "Add at least one recipient before enabling email delivery.",
+    });
+  }
+  if (
+    emailEnabled &&
+    (!c.env.RESEND_API_KEY?.trim() || !c.env.POSTER_FROM_EMAIL?.trim())
+  ) {
+    return adminRedirect(c, businessSlug, {
+      error:
+        "Configure RESEND_API_KEY and POSTER_FROM_EMAIL before enabling delivery.",
+    });
+  }
+  await storeFor(c.env).upsertAutomationSettings({
+    businessSlug,
+    enabled,
+    localTime,
+    posterTypes,
+    forceGeneration,
+    emailEnabled,
+    recipientEmails,
+  });
+  return adminRedirect(c, businessSlug, {
+    message: "Automation schedule and email delivery settings saved.",
+  });
+});
+
+app.post("/admin/:businessSlug/automation-test-email", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const form = await c.req.formData();
+  const posterType = formString(form, "posterType");
+  const date = formString(form, "date");
+  if (!isPosterType(posterType) || !resolveDate(date, DEFAULT_TIMEZONE)) {
+    return adminRedirect(c, businessSlug, {
+      error: "Choose a valid poster type and date for the test email.",
+    });
+  }
+  const store = storeFor(c.env);
+  const [settings, poster] = await Promise.all([
+    store.getAutomationSettings(businessSlug),
+    store.getGeneratedPoster(businessSlug, posterType, date),
+  ]);
+  if (!settings?.recipientEmails.length) {
+    return adminRedirect(c, businessSlug, {
+      posterType,
+      date,
+      error: "Save at least one recipient email first.",
+    });
+  }
+  if (!poster || poster.status !== "ready" || !poster.imageUrl) {
+    return adminRedirect(c, businessSlug, {
+      posterType,
+      date,
+      error: "Generate a ready poster before sending a test email.",
+    });
+  }
+  try {
+    await sendPosterEmail({
+      env: c.env,
+      settings,
+      poster,
+      idempotencyKey: `test-${businessSlug}-${posterType}-${date}-${Date.now()}`,
+    });
+    return adminRedirect(c, businessSlug, {
+      posterType,
+      date,
+      message: "Test poster email sent successfully.",
+    });
+  } catch (error) {
+    return adminRedirect(c, businessSlug, {
+      posterType,
+      date,
+      error: error instanceof Error ? error.message : "Test email failed.",
+    });
+  }
 });
 
 app.post("/admin/:businessSlug/content-sources", async (c) => {
@@ -1443,16 +1580,16 @@ async function scheduled(
   ctx: ExecutionContext,
 ) {
   const target = defaultScheduledTarget(env);
-  const task = runPosterOrchestrator({
+  const task = runAutomationHeartbeat({
     env,
     store: storeFor(env),
     businessSlug: target.businessSlug,
-    posterType: target.posterType,
-    dateOrToday: "today",
     requestUrl: `${baseUrl("https://worker.local", env.PUBLIC_BASE_URL)}/__scheduled`,
-  }).then((result) => {
-    if (result.status !== "ready") {
-      console.error("Scheduled poster generation did not finish ready", result);
+  }).then((runs) => {
+    for (const run of runs) {
+      if (run.status !== "ready" || run.deliveryStatus === "failed") {
+        console.error("Scheduled poster automation needs attention", run);
+      }
     }
   });
   ctx.waitUntil(task);

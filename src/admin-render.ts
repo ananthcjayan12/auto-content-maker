@@ -1,5 +1,6 @@
 import {
   POSTER_TYPES,
+  type AutomationSettings,
   type BusinessBrandSystem,
   type ContentSourceSettings,
   type GenerationSettings,
@@ -31,6 +32,10 @@ function selected(value: string, current: string): string {
   return value === current ? " selected" : "";
 }
 
+function checked(value: boolean): string {
+  return value ? " checked" : "";
+}
+
 function formatUsd(value: number | null | undefined): string {
   if (typeof value !== "number" || Number.isNaN(value)) return "Not available";
   return `$${value.toFixed(value >= 0.01 ? 4 : 6)}`;
@@ -43,10 +48,11 @@ const styles = `
   .top{padding:24px 28px;display:flex;align-items:center;justify-content:space-between;gap:20px}.top h1{margin:0;font-size:clamp(1.6rem,3vw,2.35rem);letter-spacing:-.035em}.eyebrow{margin:0 0 3px;color:var(--teal);font-size:.72rem;font-weight:850;letter-spacing:.12em;text-transform:uppercase}
   .workspace{position:sticky;z-index:20;top:10px;margin-top:16px;padding:18px 20px}.workspace-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:12px}.workspace h2{font-size:1rem;margin:0}.workspace .help{margin:2px 0 0}.type-tabs{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}.type-tab{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#f8fbfa;color:var(--ink);font-weight:760;text-decoration:none;text-transform:capitalize}.type-tab:hover{border-color:#9bc9c6;background:#f0f8f7}.type-tab.active{background:var(--ink);border-color:var(--ink);color:#fff}.type-count{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:#e5f2f0;color:var(--teal-strong);font-size:.72rem}.type-tab.active .type-count{background:rgba(255,255,255,.16);color:#fff}
   .section-nav{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 0}.section-nav a{padding:7px 11px;border-radius:999px;background:#eaf3f2;color:var(--ink);font-size:.82rem;font-weight:750;text-decoration:none}
-  .grid{display:grid;grid-template-columns:1.35fr .65fr;gap:18px;margin-top:18px}.card{padding:26px;scroll-margin-top:170px}.wide{grid-column:1/-1}.create-panel{order:1}.reference-panel{order:2}.content-panel{order:3}.gallery-panel{order:4}.brand-panel{order:5}.advanced-panel{order:6}.help-panel{order:7}h2{margin:0 0 6px;font-size:1.35rem;letter-spacing:-.015em}h3{margin:24px 0 10px}.help{margin:0 0 18px;color:var(--muted)}
+  .grid{display:grid;grid-template-columns:1.35fr .65fr;gap:18px;margin-top:18px}.card{padding:26px;scroll-margin-top:170px}.wide{grid-column:1/-1}.create-panel{order:1}.reference-panel{order:2}.content-panel{order:3}.gallery-panel{order:4}.automation-panel{order:5}.brand-panel{order:6}.advanced-panel{order:7}.help-panel{order:8}h2{margin:0 0 6px;font-size:1.35rem;letter-spacing:-.015em}h3{margin:24px 0 10px}.help{margin:0 0 18px;color:var(--muted)}
   .section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.section-kicker{font-size:.72rem;color:var(--teal);font-weight:850;text-transform:uppercase;letter-spacing:.1em}.current-type{display:inline-flex;padding:7px 11px;border-radius:999px;background:#e7f3f1;color:var(--teal-strong);font-weight:800;text-transform:capitalize;white-space:nowrap}
   label{display:block;margin:14px 0 6px;font-weight:760}input,select,textarea{width:100%;border:1px solid #bfd3d1;border-radius:11px;padding:11px 12px;background:#fff;color:var(--ink);font:inherit;transition:border-color .15s,box-shadow .15s}input:focus,select:focus,textarea:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px rgba(8,127,125,.12)}textarea{min-height:105px;resize:vertical}.prompt-template{min-height:240px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}input[type=color]{height:44px;padding:4px}
   .fields{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}.colors{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:20px}
+  .check-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.check-card{display:flex;align-items:flex-start;gap:9px;margin:0;padding:12px;border:1px solid var(--line);border-radius:11px;background:#f8fbfa}.check-card input{width:auto;margin:4px 0 0}.check-card strong{display:block}.check-card.disabled{opacity:.55}.provider-ok{background:#dcf8ec;color:#126444}.provider-missing{background:#fff0ed;color:#8f2d20}
   button,.button{border:0;border-radius:11px;padding:11px 16px;background:var(--ink);color:#fff;font:inherit;font-weight:800;text-decoration:none;cursor:pointer;transition:transform .12s,background .12s}button:hover,.button:hover{background:#1a4546;transform:translateY(-1px)}button:disabled{opacity:.5;cursor:not-allowed;transform:none}.secondary{background:#e6f1ef;color:var(--ink)}.secondary:hover{background:#d7eae7}.danger{background:transparent;color:var(--danger);border:1px solid #ebcbc6}.danger:hover{background:#fff1ef}
   .message{margin:16px 0 0;padding:12px 15px;border-radius:11px;background:#dcf8ec;color:#126444;font-weight:750}.message.error{background:#fff0ed;color:var(--danger)}.preview{max-width:100%;max-height:280px;object-fit:contain;border:1px solid var(--line);border-radius:12px;background:#f7fbfb;padding:8px}.url{font-size:.82rem;overflow-wrap:anywhere;color:var(--muted)}
   .reference-grid,.gallery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;margin:16px 0}.reference-item,.gallery-item{border:1px solid var(--line);padding:10px;background:#f8fbfa;border-radius:14px}.reference-item img,.gallery-item img{width:100%;height:190px;object-fit:contain;background:#fff;border-radius:10px}.reference-item label{display:flex;align-items:center;gap:8px;margin:9px 0 0}.reference-item input[type=checkbox]{width:auto}.capability,.callout{padding:12px 14px;background:#f0f7f6;border-left:3px solid var(--teal);border-radius:0 10px 10px 0;color:var(--muted);font-size:.9rem}.empty{padding:24px;border:1px dashed #b7cecb;border-radius:14px;background:#fafcfc;text-align:center}.empty strong{display:block;margin-bottom:4px}
@@ -100,6 +106,9 @@ export function renderDashboard(input: {
   generationSettings: GenerationSettings;
   promptSettings: PosterPromptSettings;
   contentSourceSettings: ContentSourceSettings;
+  automationSettings: AutomationSettings;
+  emailProviderConfigured: boolean;
+  automationTimezone: string;
   generatedPoster: GeneratedPoster | null;
   recentGeneratedPosters: GeneratedPoster[];
   selectedType: PosterType;
@@ -115,6 +124,9 @@ export function renderDashboard(input: {
     generationSettings,
     promptSettings,
     contentSourceSettings,
+    automationSettings,
+    emailProviderConfigured,
+    automationTimezone,
     generatedPoster,
     recentGeneratedPosters,
     selectedType,
@@ -240,7 +252,7 @@ export function renderDashboard(input: {
         </div>
         <div class="type-tabs">${typeTabs}</div>
         <div class="section-nav" aria-label="Dashboard sections">
-          <a href="#create">Create poster</a><a href="#references">References</a><a href="#gallery">Gallery</a><a href="#brand">Brand</a><a href="#advanced">Advanced settings</a>
+          <a href="#create">Create poster</a><a href="#references">References</a><a href="#gallery">Gallery</a><a href="#automation">Automation</a><a href="#brand">Brand</a><a href="#advanced">Advanced settings</a>
         </div>
       </nav>
       <div class="grid">
@@ -262,6 +274,35 @@ export function renderDashboard(input: {
             <select id="imageResolution" name="imageResolution">${resolutionOptions}</select>
             <p id="modelCapability" class="capability"></p>
             <div class="actions"><button type="submit">Save generation settings</button></div>
+          </form>
+        </section>
+
+        <section class="card wide automation-panel" id="automation">
+          <div class="section-heading"><div><p class="section-kicker">Automation</p><h2>Schedule and email delivery</h2><p class="help">The Worker checks every five minutes and runs each selected type once per day, at or after the clinic's local time.</p></div><span class="pill ${emailProviderConfigured ? "provider-ok" : "provider-missing"}">${emailProviderConfigured ? "Resend configured" : "Resend setup required"}</span></div>
+          <form method="post" action="/admin/${escapeHtml(brand.businessSlug)}/automation-settings">
+            <label class="check-card"><input type="checkbox" name="enabled"${checked(automationSettings.enabled)}><span><strong>Enable daily automation</strong><span class="mini">Turn off to pause scheduled generation without redeploying.</span></span></label>
+            <div class="fields">
+              <div><label for="localTime">Clinic delivery schedule</label><input id="localTime" name="localTime" type="time" step="300" value="${escapeHtml(automationSettings.localTime)}" required><p class="mini">Timezone: ${escapeHtml(automationTimezone)}. If this time has already passed today, enabling the schedule can run it on the next heartbeat.</p></div>
+              <div><label>Poster types to generate</label><div class="check-grid">
+                ${POSTER_TYPES.map((type) => {
+                  const disabled = type === "review";
+                  return `<label class="check-card${disabled ? " disabled" : ""}"><input type="checkbox" name="posterTypes" value="${type}"${checked(automationSettings.posterTypes.includes(type))}${disabled ? " disabled" : ""}><span><strong>${escapeHtml(typeLabels[type])}</strong><span class="mini">${disabled ? "Requires a screenshot or message" : "Generate daily"}</span></span></label>`;
+                }).join("")}
+              </div></div>
+            </div>
+            <label class="check-card"><input type="checkbox" name="forceGeneration"${checked(automationSettings.forceGeneration)}><span><strong>Force regeneration at the scheduled run</strong><span class="mini">Replaces an existing ready poster for that date. This runs only once per selected type/day, but creates additional Gemini cost.</span></span></label>
+            <h3>Email delivery</h3>
+            <label class="check-card"><input type="checkbox" name="emailEnabled"${checked(automationSettings.emailEnabled)}><span><strong>Email ready posters automatically</strong><span class="mini">Only posters with status ready are sent. Failed or needs-review outputs are not delivered.</span></span></label>
+            <label for="recipientEmails">Clinic recipient email addresses</label>
+            <textarea id="recipientEmails" name="recipientEmails" placeholder="owner@example.com, manager@example.com">${escapeHtml(automationSettings.recipientEmails.join("\n"))}</textarea>
+            <p class="callout">Sender: ${emailProviderConfigured ? "configured securely in the Worker" : "add RESEND_API_KEY and POSTER_FROM_EMAIL before enabling email"}. API keys are never editable in this dashboard.</p>
+            <div class="actions"><button type="submit">Save automation settings</button></div>
+          </form>
+          <form method="post" action="/admin/${escapeHtml(brand.businessSlug)}/automation-test-email">
+            <input type="hidden" name="posterType" value="${escapeHtml(selectedType)}">
+            <input type="hidden" name="date" value="${escapeHtml(selectedDate)}">
+            <div class="actions"><button type="submit" class="secondary"${generatedPoster?.status === "ready" && emailProviderConfigured && automationSettings.recipientEmails.length ? "" : " disabled"}>Send current ${escapeHtml(typeLabels[selectedType])} poster as test email</button></div>
+            <p class="mini">Uses the currently selected type and date. Generate a ready poster and save recipients first.</p>
           </form>
         </section>
 
@@ -466,6 +507,7 @@ export function renderDashboard(input: {
           document.querySelector('.reference-panel'),
           document.querySelector('.content-panel'),
           document.querySelector('.gallery-panel'),
+          document.querySelector('.automation-panel'),
           document.querySelector('.brand-panel'),
           ...document.querySelectorAll('.advanced-panel'),
           document.querySelector('.help-panel')
