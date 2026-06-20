@@ -50,9 +50,7 @@ export function usageFromResponse(
       ? (response.usageMetadata as Record<string, unknown>)
       : {};
   const number = (key: string): number =>
-    key in metadata && typeof metadata[key] === "number"
-      ? metadata[key]
-      : 0;
+    key in metadata && typeof metadata[key] === "number" ? metadata[key] : 0;
   return {
     promptTokens: number("promptTokenCount"),
     outputTokens: number("candidatesTokenCount"),
@@ -90,7 +88,6 @@ export function estimateGenerationCost(input: {
     imageInputUsd,
     imageOutputUsd,
     totalUsd,
-    note:
-      "Estimated Standard paid-tier API cost from Gemini usage metadata and published pricing; actual billing may differ.",
+    note: "Estimated Standard paid-tier API cost from Gemini usage metadata and published pricing; actual billing may differ.",
   };
 }

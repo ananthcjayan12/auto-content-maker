@@ -9,6 +9,11 @@ import {
 import { imageContentTypeForKey, isUploadedFile, uploadImage } from "./assets";
 import { applyDrPoojaSmileCraftPreset } from "./brand-presets";
 import {
+  defaultContentSourceSettings,
+  findTodaySheetContent,
+  googleSheetCsvUrl,
+} from "./content-sources";
+import {
   DEFAULT_GENERATION_SETTINGS,
   isImageModel,
   isImageResolution,
@@ -258,23 +263,34 @@ app.get("/admin/:businessSlug", async (c) => {
   const selectedDate =
     resolveDate(requestedDate, c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE) ??
     todayInTimezone(c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE);
-  const [typeReference, savedGenerationSettings, savedPromptSettings] =
-    await Promise.all([
-      store.getTypeReference(businessSlug, posterType),
-      store.getGenerationSettings(businessSlug),
-      store.getPromptSettings(businessSlug),
-    ]);
-  const [generatedPoster, recentGeneratedPosters] = await Promise.all([
-    store.getGeneratedPoster(businessSlug, posterType, selectedDate),
-    store.listGeneratedPosters(businessSlug, {
-      posterType,
-      limit: 24,
-    }),
+  const [
+    savedGenerationSettings,
+    savedPromptSettings,
+    savedContentSourceSettings,
+  ] = await Promise.all([
+    store.getGenerationSettings(businessSlug),
+    store.getPromptSettings(businessSlug),
+    store.getContentSourceSettings(businessSlug),
   ]);
+  const [generatedPoster, recentGeneratedPosters, typeReferences] =
+    await Promise.all([
+      store.getGeneratedPoster(businessSlug, posterType, selectedDate),
+      store.listGeneratedPosters(businessSlug, {
+        posterType,
+        limit: 24,
+      }),
+      Promise.all(
+        POSTER_TYPES.map((type) => store.getTypeReference(businessSlug, type)),
+      ),
+    ]);
+  const allTypeReferences = Object.fromEntries(
+    POSTER_TYPES.map((type, index) => [type, typeReferences[index] ?? null]),
+  ) as Record<PosterType, (typeof typeReferences)[number]>;
   return c.html(
     renderDashboard({
       brand,
-      typeReference,
+      typeReference: allTypeReferences[posterType],
+      allTypeReferences,
       generatedPoster,
       recentGeneratedPosters,
       generationSettings:
@@ -283,6 +299,9 @@ app.get("/admin/:businessSlug", async (c) => {
       promptSettings: normalizePromptSettings(
         savedPromptSettings ?? defaultPromptSettings(businessSlug),
       ),
+      contentSourceSettings:
+        savedContentSourceSettings ??
+        defaultContentSourceSettings(businessSlug),
       selectedType: posterType,
       selectedDate,
       publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
@@ -290,6 +309,42 @@ app.get("/admin/:businessSlug", async (c) => {
       error: c.req.query("error") || undefined,
     }),
   );
+});
+
+app.post("/admin/:businessSlug/content-sources", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const form = await c.req.formData();
+  const awarenessMode = formString(form, "awarenessMode");
+  const googleSheetUrl = formString(form, "googleSheetUrl") || null;
+  if (awarenessMode !== "sheet_first" && awarenessMode !== "ai_only") {
+    return adminRedirect(c, businessSlug, {
+      error: "Invalid awareness content source.",
+    });
+  }
+  try {
+    if (googleSheetUrl) googleSheetCsvUrl(googleSheetUrl);
+    await storeFor(c.env).upsertContentSourceSettings({
+      businessSlug,
+      awarenessMode,
+      googleSheetUrl,
+    });
+    return adminRedirect(c, businessSlug, {
+      message: "Awareness content source saved.",
+    });
+  } catch (error) {
+    return adminRedirect(c, businessSlug, {
+      error:
+        error instanceof Error
+          ? error.message
+          : "Content source update failed.",
+    });
+  }
 });
 
 app.post("/admin/:businessSlug/generation-settings", async (c) => {
@@ -638,6 +693,44 @@ app.post("/admin/:businessSlug/generation-lab/brief", async (c) => {
   const base = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
   const contextUrl = `${base}/daily-poster/${businessSlug}/${posterType}/today`;
   const contextJsonUrl = `${contextUrl}.json`;
+  const sourceSettings =
+    (await store.getContentSourceSettings(businessSlug)) ??
+    defaultContentSourceSettings(businessSlug);
+  const suppliedContent =
+    posterType === "awareness" &&
+    sourceSettings.awarenessMode === "sheet_first" &&
+    sourceSettings.googleSheetUrl
+      ? await findTodaySheetContent(
+          sourceSettings.googleSheetUrl,
+          resolvedDate,
+        ).catch(() => null)
+      : null;
+  const reviewFile = form.get("reviewScreenshot");
+  const reviewMessage = formString(form, "reviewMessage");
+  let reviewScreenshotUrl: string | null = null;
+  let reviewScreenshot = null;
+  if (posterType === "review") {
+    if (!isUploadedFile(reviewFile) && !reviewMessage) {
+      return jsonError(
+        c,
+        400,
+        "Upload a customer review screenshot or paste the review message.",
+      );
+    }
+    if (isUploadedFile(reviewFile)) {
+      reviewScreenshotUrl = await uploadImage({
+        env: c.env,
+        file: reviewFile,
+        keyPrefix: `businesses/${businessSlug}/reviews/${resolvedDate}-${Date.now()}`,
+        publicBaseUrl: base,
+      });
+      reviewScreenshot = await imageUrlToBase64({
+        url: reviewScreenshotUrl,
+        env: c.env,
+        publicBaseUrl: base,
+      });
+    }
+  }
   const brief = await generatePosterBrief({
     apiKey,
     model: generationSettings.textModel,
@@ -647,13 +740,23 @@ app.post("/admin/:businessSlug/generation-lab/brief", async (c) => {
     date: resolvedDate,
     contextJsonUrl,
     promptSettings,
+    suppliedContent,
+    reviewScreenshot,
+    reviewMessage,
   });
+  const resolvedBrief: Record<string, unknown> = {
+    ...brief.brief,
+    contentSource: suppliedContent ? "google_sheet" : "ai_generated",
+    ...(suppliedContent ? { sourceRow: suppliedContent } : {}),
+    ...(reviewScreenshotUrl ? { reviewScreenshotUrl } : {}),
+    ...(reviewMessage ? { suppliedReviewMessage: reviewMessage } : {}),
+  };
   const imagePrompt = buildImagePrompt({
     brand,
     posterType,
     typeReference,
     date: resolvedDate,
-    brief: brief.brief,
+    brief: resolvedBrief,
     contextUrl,
     runId: new Date().toISOString().replaceAll(/\D/g, "").slice(0, 17),
     settings: generationSettings,
@@ -666,8 +769,8 @@ app.post("/admin/:businessSlug/generation-lab/brief", async (c) => {
     status: "pending",
     contextUrl,
     contextJsonUrl,
-    angle: String(brief.brief.angle ?? ""),
-    briefJson: JSON.stringify(brief.brief),
+    angle: String(resolvedBrief.angle ?? ""),
+    briefJson: JSON.stringify(resolvedBrief),
     prompt: imagePrompt,
     imageUrl: null,
     imageContentType: null,
@@ -690,7 +793,8 @@ app.post("/admin/:businessSlug/generation-lab/brief", async (c) => {
     contextJsonUrl,
     generationSettings,
     dailyBriefPrompt: brief.prompt,
-    dailyBrief: brief.brief,
+    dailyBrief: resolvedBrief,
+    contentSource: resolvedBrief.contentSource,
     rawText: brief.rawText,
     imagePrompt,
     generatedPoster: savedGeneratedPoster,
@@ -1217,6 +1321,19 @@ app.post(
       result.generationSettings ??
       defaultGenerationSettings(result.brand.businessSlug, c.env);
     const model = generationSettings.textModel;
+    const store = storeFor(c.env);
+    const sourceSettings =
+      (await store.getContentSourceSettings(result.brand.businessSlug)) ??
+      defaultContentSourceSettings(result.brand.businessSlug);
+    const suppliedContent =
+      result.posterType === "awareness" &&
+      sourceSettings.awarenessMode === "sheet_first" &&
+      sourceSettings.googleSheetUrl
+        ? await findTodaySheetContent(
+            sourceSettings.googleSheetUrl,
+            result.resolvedDate,
+          ).catch(() => null)
+        : null;
     const brief = await generatePosterBrief({
       apiKey,
       model,
@@ -1226,7 +1343,13 @@ app.post(
       date: result.resolvedDate,
       contextJsonUrl,
       promptSettings: result.promptSettings,
+      suppliedContent,
     });
+    const resolvedBrief: Record<string, unknown> = {
+      ...brief.brief,
+      contentSource: suppliedContent ? "google_sheet" : "ai_generated",
+      ...(suppliedContent ? { sourceRow: suppliedContent } : {}),
+    };
 
     return c.json({
       success: true,
@@ -1236,14 +1359,15 @@ app.post(
       date: result.resolvedDate,
       contextJsonUrl,
       dailyBriefPrompt: brief.prompt,
-      dailyBrief: brief.brief,
+      dailyBrief: resolvedBrief,
+      contentSource: resolvedBrief.contentSource,
       rawText: brief.rawText,
       imagePrompt: buildImagePrompt({
         brand: result.brand,
         posterType: result.posterType,
         typeReference: result.typeReference,
         date: result.resolvedDate,
-        brief: brief.brief,
+        brief: resolvedBrief,
         contextUrl,
         runId: new Date().toISOString().replaceAll(/\D/g, "").slice(0, 17),
         settings: generationSettings,

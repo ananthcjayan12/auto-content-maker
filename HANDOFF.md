@@ -4,6 +4,45 @@ Last updated: 2026-06-18
 Project path: `/Users/ananthu/Desktop/new_repos/auto-content-maker`  
 Project name: `daily-poster-packet`
 
+## 2026-06-19 content-source and review workflow update
+
+The admin dashboard now has two awareness-content choices:
+
+1. **Google Sheet first, then AI fallback** — fetch a shared Google Sheet as CSV, find the row whose `Date` matches the poster date, and ask Gemini to edit that supplied content without changing its facts. If the row is missing or the sheet cannot be read, the normal AI-generated awareness brief is used.
+2. **Always use AI-generated content** — skip Google Sheets.
+
+The sheet must be shared as “Anyone with the link can view.” It requires a `Date` column and accepts `YYYY-MM-DD` or `DD/MM/YYYY`; all other named columns are supplied to Gemini.
+
+For `review` posters, the Generation Lab accepts either a customer review screenshot or pasted review text. The Worker uploads a supplied screenshot to R2, sends it to Gemini's text model to extract the real quote/rating/attribution, saves its URL in the brief, and supplies the same screenshot to the image model as factual evidence. Pasted text is included directly as the factual source.
+
+Migration:
+
+```text
+migrations/0008_content_sources.sql
+```
+
+Latest verification:
+
+```text
+npm run typecheck
+npm test
+27 tests passed
+```
+
+## 2026-06-19 admin workspace UX update
+
+The admin dashboard is now organized as a content studio:
+
+- a persistent poster-type workspace for Awareness, Offer, Festival, Anniversary, Review, and General
+- visible saved-reference counts for every poster type
+- independent reference libraries and editable poster-type prompts for every type
+- the selected type consistently scopes creation, references, gallery, prompt settings, date, and public context
+- the everyday flow is ordered as Create → References → Content source (Awareness only) → Gallery
+- brand and global prompt controls are de-emphasized/collapsed as advanced settings
+- responsive desktop, tablet, and horizontally scrollable mobile poster-type navigation
+
+The local browser QA covered Awareness on desktop and Review on a 390 px mobile viewport.
+
 ## 2026-06-18 update: new Gemini orchestrator flow
 
 The direction changed from “ChatGPT Scheduled Task opens the public page and generates the poster inside ChatGPT” to the Worker-driven flow in `new_flow.md`.

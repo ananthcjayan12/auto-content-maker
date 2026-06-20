@@ -1,5 +1,15 @@
 # Daily Poster Packet
 
+## Awareness content and customer reviews
+
+In the admin dashboard, awareness posters can use either **Google Sheet first, then AI fallback** or **AI only**. A shared sheet needs a `Date` column (`YYYY-MM-DD` or `DD/MM/YYYY`). When today's row exists, only that row is sent to Gemini for editing; the whole sheet is never included. When it does not, the normal AI brief is generated. Import [`sample-awareness-content.csv`](sample-awareness-content.csv) into Google Sheets to start.
+
+For review posters, select `review` in the Generation Lab and either upload the customer's review screenshot or paste the review message. A screenshot is used to extract the testimonial and is carried into image generation as a factual reference.
+
+## Admin content studio
+
+Use the poster-type tabs at the top of the dashboard to switch between Awareness, Offer, Festival, Anniversary, Review, and General. Each type has its own reference-image library, generation prompt, generated gallery, and public context. The number on each tab shows how many references are saved for that type.
+
 A production-oriented Cloudflare Worker that publishes stable brand/design context and can generate daily posters from Cloudflare Cron using Gemini.
 
 The public context page is still useful for inspection and debugging, but the main automation path is now Worker-driven: Cron loads the brand context, asks Gemini for the day’s poster angle/brief, asks Gemini Flash Image for a 9:16 poster, stores the result in R2, and writes generation metadata to D1.

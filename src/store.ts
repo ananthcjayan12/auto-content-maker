@@ -1,5 +1,6 @@
 import type {
   BusinessBrandSystem,
+  ContentSourceSettings,
   CostBreakdown,
   DailyPosterPacket,
   GenerationSettings,
@@ -76,6 +77,14 @@ interface PromptSettingsRow {
   master_image_prompt_template: string;
   reference_prompt_template: string;
   poster_type_prompts_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ContentSourceSettingsRow {
+  business_slug: string;
+  awareness_mode: "sheet_first" | "ai_only";
+  google_sheet_url: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -213,6 +222,18 @@ function mapPromptSettings(row: PromptSettingsRow): PosterPromptSettings {
       row.poster_type_prompts_json,
       {} as PosterPromptSettings["posterTypePrompts"],
     ),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapContentSourceSettings(
+  row: ContentSourceSettingsRow,
+): ContentSourceSettings {
+  return {
+    businessSlug: row.business_slug,
+    awarenessMode: row.awareness_mode,
+    googleSheetUrl: row.google_sheet_url,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -397,6 +418,38 @@ export class D1PosterStore implements PosterStore {
       .run();
 
     return (await this.getGenerationSettings(settings.businessSlug))!;
+  }
+
+  async getContentSourceSettings(
+    businessSlug: string,
+  ): Promise<ContentSourceSettings | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT * FROM poster_content_source_settings WHERE business_slug = ? LIMIT 1",
+      )
+      .bind(businessSlug)
+      .first<ContentSourceSettingsRow>();
+    return row ? mapContentSourceSettings(row) : null;
+  }
+
+  async upsertContentSourceSettings(
+    settings: ContentSourceSettings,
+  ): Promise<ContentSourceSettings> {
+    await this.db
+      .prepare(
+        `INSERT INTO poster_content_source_settings (business_slug, awareness_mode, google_sheet_url)
+        VALUES (?, ?, ?)
+        ON CONFLICT(business_slug) DO UPDATE SET awareness_mode = excluded.awareness_mode,
+          google_sheet_url = excluded.google_sheet_url,
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+      )
+      .bind(
+        settings.businessSlug,
+        settings.awarenessMode,
+        settings.googleSheetUrl,
+      )
+      .run();
+    return (await this.getContentSourceSettings(settings.businessSlug))!;
   }
 
   async getPromptSettings(

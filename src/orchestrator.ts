@@ -1,4 +1,8 @@
 import { imageContentTypeForKey } from "./assets";
+import {
+  defaultContentSourceSettings,
+  findTodaySheetContent,
+} from "./content-sources";
 import { DEFAULT_TIMEZONE, resolveDate, todayInTimezone } from "./date";
 import { estimateGenerationCost, usageFromResponse } from "./gemini-pricing";
 import {
@@ -407,10 +411,13 @@ function buildBriefPrompt(input: {
   date: string;
   contextJsonUrl: string;
   promptSettings: PosterPromptSettings;
+  suppliedContent?: Record<string, string> | null;
+  hasReviewScreenshot?: boolean;
+  reviewMessage?: string | null;
 }): string {
   const { brand, posterType, typeReference, date, promptSettings } = input;
   const posterTypePrompt = promptSettings.posterTypePrompts[posterType];
-  return fillPromptTemplate(
+  const basePrompt = fillPromptTemplate(
     promptSettings.contentPromptTemplate,
     promptVariables({
       brand,
@@ -420,6 +427,15 @@ function buildBriefPrompt(input: {
       posterTypePrompt,
     }),
   );
+  const sourceInstruction = input.suppliedContent
+    ? `\n\nSUPPLIED CONTENT FROM TODAY'S GOOGLE SHEET ROW\n${JSON.stringify(input.suppliedContent, null, 2)}\nEdit this copy for clarity and mobile readability while preserving every fact and meaning. Do not replace it with a different topic.`
+    : "";
+  const reviewInstruction = input.hasReviewScreenshot
+    ? "\n\nA customer review screenshot is attached. Read the actual review, rating, and attribution from it. Preserve the meaning, do not invent missing details, and create the review-poster JSON from that evidence."
+    : input.reviewMessage
+      ? `\n\nSUPPLIED CUSTOMER REVIEW MESSAGE\n${input.reviewMessage}\nUse this exact customer-supplied review as the factual source. You may shorten it only for mobile readability without changing its meaning. Do not invent a rating, name, treatment, or result.`
+      : "";
+  return basePrompt + sourceInstruction + reviewInstruction;
 }
 
 export async function generatePosterBrief(input: {
@@ -431,6 +447,9 @@ export async function generatePosterBrief(input: {
   date: string;
   contextJsonUrl: string;
   promptSettings: PosterPromptSettings;
+  suppliedContent?: Record<string, string> | null;
+  reviewScreenshot?: ImageBase64Reference | null;
+  reviewMessage?: string | null;
 }): Promise<{
   prompt: string;
   brief: Record<string, unknown>;
@@ -444,12 +463,24 @@ export async function generatePosterBrief(input: {
     date: input.date,
     contextJsonUrl: input.contextJsonUrl,
     promptSettings: input.promptSettings,
+    suppliedContent: input.suppliedContent,
+    hasReviewScreenshot: Boolean(input.reviewScreenshot),
+    reviewMessage: input.reviewMessage,
   });
+  const parts: Record<string, unknown>[] = [{ text: prompt }];
+  if (input.reviewScreenshot) {
+    parts.push({
+      inline_data: {
+        data: input.reviewScreenshot.base64,
+        mime_type: input.reviewScreenshot.contentType,
+      },
+    });
+  }
   const response = await callGemini({
     apiKey: input.apiKey,
     model: input.model,
     body: {
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      contents: [{ role: "user", parts }],
       generationConfig: { responseMimeType: "application/json" },
     },
   });
@@ -541,7 +572,11 @@ async function generatePosterImage(input: {
     : typeReference?.productionReferenceImageUrl
       ? [typeReference.productionReferenceImageUrl]
       : [];
-  const [logo, board, posterReferences] = await Promise.all([
+  const reviewScreenshotUrl =
+    posterType === "review" && typeof brief.reviewScreenshotUrl === "string"
+      ? brief.reviewScreenshotUrl
+      : null;
+  const [logo, board, posterReferences, reviewScreenshot] = await Promise.all([
     imageUrlToBase64({ url: brand.logoUrl, env, publicBaseUrl: base }),
     imageUrlToBase64({
       url: brand.brandReferenceBoardUrl,
@@ -553,17 +588,29 @@ async function generatePosterImage(input: {
         imageUrlToBase64({ url, env, publicBaseUrl: base }),
       ),
     ),
+    imageUrlToBase64({ url: reviewScreenshotUrl, env, publicBaseUrl: base }),
   ]);
   const capability = IMAGE_MODEL_CAPABILITIES[imageModel];
   const availableReferenceSlots = Math.max(
     0,
-    capability.maxInputImages - Number(Boolean(logo)) - Number(Boolean(board)),
+    capability.maxInputImages -
+      Number(Boolean(logo)) -
+      Number(Boolean(board)) -
+      Number(Boolean(reviewScreenshot)),
   );
   const styleReferenceLimit = Math.min(
     capability.maxStyleReferences,
     availableReferenceSlots,
   );
   const references: LabeledImageReference[] = [
+    reviewScreenshot
+      ? {
+          ...reviewScreenshot,
+          label: "Customer review screenshot",
+          guidance:
+            "Use this as factual content evidence for the testimonial. Do not copy the screenshot UI or invent review details.",
+        }
+      : null,
     logo
       ? {
           ...logo,
@@ -862,6 +909,18 @@ export async function runPosterOrchestrator(input: {
   }
 
   try {
+    const sourceSettings =
+      (await store.getContentSourceSettings(businessSlug)) ??
+      defaultContentSourceSettings(businessSlug);
+    const suppliedContent =
+      posterType === "awareness" &&
+      sourceSettings.awarenessMode === "sheet_first" &&
+      sourceSettings.googleSheetUrl
+        ? await findTodaySheetContent(
+            sourceSettings.googleSheetUrl,
+            date,
+          ).catch(() => null)
+        : null;
     const briefResult = await generatePosterBrief({
       apiKey,
       model: textModel,
@@ -871,13 +930,19 @@ export async function runPosterOrchestrator(input: {
       date,
       contextJsonUrl,
       promptSettings,
+      suppliedContent,
     });
+    const resolvedBrief: Record<string, unknown> = {
+      ...briefResult.brief,
+      contentSource: suppliedContent ? "google_sheet" : "ai_generated",
+      ...(suppliedContent ? { sourceRow: suppliedContent } : {}),
+    };
     const prompt = buildImagePrompt({
       brand,
       posterType,
       typeReference,
       date,
-      brief: briefResult.brief,
+      brief: resolvedBrief,
       contextUrl,
       runId,
       settings: generationSettings,
@@ -897,12 +962,12 @@ export async function runPosterOrchestrator(input: {
       typeReference,
       generationSettings,
       prompt,
-      brief: briefResult.brief,
+      brief: resolvedBrief,
       briefUsage: briefResult.usage,
       started: {
         ...started,
-        angle: String(briefResult.brief.angle ?? ""),
-        briefJson: JSON.stringify(briefResult.brief),
+        angle: String(resolvedBrief.angle ?? ""),
+        briefJson: JSON.stringify(resolvedBrief),
         prompt,
         briefUsage: briefResult.usage,
       },

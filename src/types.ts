@@ -95,6 +95,16 @@ export interface GenerationSettings {
   updatedAt?: string;
 }
 
+export type AwarenessContentMode = "sheet_first" | "ai_only";
+
+export interface ContentSourceSettings {
+  businessSlug: string;
+  awarenessMode: AwarenessContentMode;
+  googleSheetUrl: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface PosterPromptSettings {
   businessSlug: string;
   contentPromptTemplate: string;
@@ -172,6 +182,12 @@ export interface PosterStore {
   upsertGenerationSettings(
     settings: GenerationSettings,
   ): Promise<GenerationSettings>;
+  getContentSourceSettings(
+    businessSlug: string,
+  ): Promise<ContentSourceSettings | null>;
+  upsertContentSourceSettings(
+    settings: ContentSourceSettings,
+  ): Promise<ContentSourceSettings>;
   getPromptSettings(businessSlug: string): Promise<PosterPromptSettings | null>;
   upsertPromptSettings(
     settings: PosterPromptSettings,

@@ -6,6 +6,7 @@ import { defaultPromptSettings } from "../src/prompt-settings";
 import type {
   Bindings,
   BusinessBrandSystem,
+  ContentSourceSettings,
   DailyPosterPacket,
   GenerationSettings,
   GeneratedPoster,
@@ -15,12 +16,17 @@ import type {
   PosterTypeReference,
 } from "../src/types";
 import { todayInTimezone } from "../src/date";
+import {
+  findTodaySheetContent,
+  googleSheetCsvUrl,
+} from "../src/content-sources";
 
 class MemoryStore implements PosterStore {
   brands = new Map<string, BusinessBrandSystem>();
   packets = new Map<string, DailyPosterPacket>();
   typeReferences = new Map<string, PosterTypeReference>();
   generationSettings = new Map<string, GenerationSettings>();
+  contentSourceSettings = new Map<string, ContentSourceSettings>();
   promptSettings = new Map<string, PosterPromptSettings>();
   generatedPosters = new Map<string, GeneratedPoster>();
 
@@ -68,6 +74,16 @@ class MemoryStore implements PosterStore {
   async upsertGenerationSettings(settings: GenerationSettings) {
     const saved = { ...settings, updatedAt: new Date().toISOString() };
     this.generationSettings.set(settings.businessSlug, saved);
+    return saved;
+  }
+
+  async getContentSourceSettings(slug: string) {
+    return this.contentSourceSettings.get(slug) ?? null;
+  }
+
+  async upsertContentSourceSettings(settings: ContentSourceSettings) {
+    const saved = { ...settings, updatedAt: new Date().toISOString() };
+    this.contentSourceSettings.set(settings.businessSlug, saved);
     return saved;
   }
 
@@ -232,6 +248,37 @@ describe("daily poster packet worker", () => {
     ).toBe("2K");
   });
 
+  it("finds today's row in a shared Google Sheet CSV", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(
+            'Date,Headline,Supporting Text\n18/06/2026,"Brush before bed","A small habit, every night"\n19/06/2026,Tomorrow,Later',
+            { status: 200 },
+          ),
+        ),
+    );
+    expect(
+      googleSheetCsvUrl(
+        "https://docs.google.com/spreadsheets/d/sheet-id/edit#gid=42",
+      ),
+    ).toBe(
+      "https://docs.google.com/spreadsheets/d/sheet-id/export?format=csv&gid=42",
+    );
+    await expect(
+      findTodaySheetContent(
+        "https://docs.google.com/spreadsheets/d/sheet-id/edit#gid=42",
+        today,
+      ),
+    ).resolves.toEqual({
+      Date: "18/06/2026",
+      Headline: "Brush before bed",
+      "Supporting Text": "A small habit, every night",
+    });
+  });
+
   it("renders the business-select admin login on the homepage", async () => {
     const response = await app.request("/", {}, env);
     const html = await response.text();
@@ -267,14 +314,30 @@ describe("daily poster packet worker", () => {
     );
     const dashboard = await dashboardResponse.text();
     expect(dashboardResponse.status).toBe(200);
-    expect(dashboard).toContain("Poster admin dashboard");
+    expect(dashboard).toContain("Content studio");
     expect(dashboard).toContain("Save brand system");
-    expect(dashboard).toContain("Save reference images");
+    expect(dashboard).toContain("Save Awareness references");
     expect(dashboard).toContain("Save generation settings");
     expect(dashboard).toContain("Editable generation prompts");
     expect(dashboard).toContain("Daily generation flow");
-    expect(dashboard).toContain("Generation lab");
-    expect(dashboard).toContain("Generated image gallery");
+    expect(dashboard).toContain("Create awareness poster");
+    expect(dashboard).toContain("Awareness poster gallery");
+    expect(dashboard).toContain("posterType=offer");
+    expect(dashboard).toContain("posterType=review");
+    expect(dashboard).toContain(
+      "References, prompts, gallery, and generation stay scoped",
+    );
+
+    const offerDashboardResponse = await app.request(
+      `/admin/${brand.businessSlug}?posterType=offer&date=${today}`,
+      { headers: { Cookie: cookie?.split(";")[0] ?? "" } },
+      env,
+    );
+    const offerDashboard = await offerDashboardResponse.text();
+    expect(offerDashboard).toContain("Working on: Offer");
+    expect(offerDashboard).toContain("Save Offer references");
+    expect(offerDashboard).toContain('name="posterType" value="offer"');
+    expect(offerDashboard).toContain('class="card wide content-panel" hidden');
   });
 
   it("rejects an invalid dashboard token", async () => {
@@ -330,6 +393,41 @@ describe("daily poster packet worker", () => {
     );
   });
 
+  it("saves the awareness Google Sheet-first option", async () => {
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const form = new FormData();
+    form.set("awarenessMode", "sheet_first");
+    form.set(
+      "googleSheetUrl",
+      "https://docs.google.com/spreadsheets/d/sheet-id/edit#gid=0",
+    );
+    const response = await app.request(
+      `/admin/${brand.businessSlug}/content-sources`,
+      { method: "POST", headers: { Cookie: cookie }, body: form },
+      env,
+    );
+    expect(response.status).toBe(303);
+    expect(
+      await store.getContentSourceSettings(brand.businessSlug),
+    ).toMatchObject({
+      awarenessMode: "sheet_first",
+      googleSheetUrl:
+        "https://docs.google.com/spreadsheets/d/sheet-id/edit#gid=0",
+    });
+  });
+
   it("saves editable prompt templates from the dashboard", async () => {
     const loginResponse = await app.request(
       "/admin/login",
@@ -377,7 +475,7 @@ describe("daily poster packet worker", () => {
     });
   });
 
-  it("uploads multiple poster-type reference images to R2 through the dashboard", async () => {
+  it("keeps an independent reference library for every poster type", async () => {
     const put = vi.fn().mockResolvedValue(undefined);
     env.ASSETS = { put } as unknown as R2Bucket;
     const loginResponse = await app.request(
@@ -421,6 +519,29 @@ describe("daily poster packet worker", () => {
       `/assets/businesses/${brand.businessSlug}/types/awareness/reference-`,
     );
     expect(savedReference?.referenceImageUrls).toHaveLength(2);
+
+    const offerForm = new FormData();
+    offerForm.set("posterType", "offer");
+    offerForm.set("date", today);
+    offerForm.set("notes", "Offer-specific visual style.");
+    offerForm.append(
+      "typeReferenceFiles",
+      new File(["offer"], "offer-reference.png", { type: "image/png" }),
+    );
+    const offerResponse = await app.request(
+      `/admin/${brand.businessSlug}/type-reference`,
+      { method: "POST", headers: { Cookie: cookie }, body: offerForm },
+      env,
+    );
+    expect(offerResponse.status).toBe(303);
+    expect(
+      (await store.getTypeReference(brand.businessSlug, "offer"))
+        ?.referenceImageUrls[0],
+    ).toContain(`/types/offer/reference-`);
+    expect(
+      (await store.getTypeReference(brand.businessSlug, "awareness"))
+        ?.referenceImageUrls,
+    ).toHaveLength(2);
   });
 
   it("saves ready daily packet content without duplicating a reference image", async () => {
@@ -865,6 +986,141 @@ describe("daily poster packet worker", () => {
       "TODAY'S CONTENT — CHANGE ONLY THESE CONTENT AREAS",
     );
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("grounds a review brief in an uploaded customer screenshot", async () => {
+    env.GEMINI_API_KEY = "gemini-secret";
+    env.ASSETS = {
+      put: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn().mockResolvedValue({
+        arrayBuffer: vi
+          .fn()
+          .mockResolvedValue(new Uint8Array([1, 2, 3]).buffer),
+        writeHttpMetadata: (headers: Headers) =>
+          headers.set("content-type", "image/png"),
+      }),
+    } as unknown as R2Bucket;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      angle: "Patient experience",
+                      reviewQuote: "Wonderful and gentle care",
+                      reviewAttribution: "A patient",
+                    }),
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const form = new FormData();
+    form.set("posterType", "review");
+    form.set("date", today);
+    form.set(
+      "reviewScreenshot",
+      new File([new Uint8Array([1, 2, 3])], "review.png", {
+        type: "image/png",
+      }),
+    );
+    const response = await app.request(
+      `/admin/${brand.businessSlug}/generation-lab/brief`,
+      { method: "POST", headers: { Cookie: cookie }, body: form },
+      env,
+    );
+    const body = (await response.json()) as {
+      dailyBrief: Record<string, unknown>;
+    };
+    expect(response.status).toBe(200);
+    expect(body.dailyBrief.reviewQuote).toBe("Wonderful and gentle care");
+    expect(body.dailyBrief.reviewScreenshotUrl).toMatch(
+      /\/assets\/businesses\/dr-poojas-smile-craft\/reviews\//,
+    );
+    const geminiBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(geminiBody.contents[0].parts[1].inline_data.mime_type).toBe(
+      "image/png",
+    );
+  });
+
+  it("accepts a pasted review message without requiring a screenshot", async () => {
+    env.GEMINI_API_KEY = "gemini-secret";
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      reviewQuote: "The doctor explained everything clearly.",
+                    }),
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const form = new FormData();
+    form.set("posterType", "review");
+    form.set("date", today);
+    form.set("reviewMessage", "The doctor explained everything clearly.");
+    const response = await app.request(
+      `/admin/${brand.businessSlug}/generation-lab/brief`,
+      { method: "POST", headers: { Cookie: cookie }, body: form },
+      env,
+    );
+    const body = (await response.json()) as {
+      dailyBrief: Record<string, unknown>;
+    };
+    expect(response.status).toBe(200);
+    expect(body.dailyBrief.suppliedReviewMessage).toBe(
+      "The doctor explained everything clearly.",
+    );
+    const geminiBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(geminiBody.contents[0].parts).toHaveLength(1);
+    expect(geminiBody.contents[0].parts[0].text).toContain(
+      "SUPPLIED CUSTOMER REVIEW MESSAGE",
+    );
   });
 
   it("generates a dashboard brief, renders an image from the edited prompt, and reuses it as a reference", async () => {
