@@ -6,7 +6,7 @@ In the admin dashboard, awareness posters can use either **Google Sheet first, t
 
 Shared Google Sheet links are read through Google's GViz CSV endpoint. The generated brief records whether today's row matched or why the workflow fell back to AI, and the Generation Lab displays fetch/matching warnings directly.
 
-For review posters, select `review` in the Generation Lab and either upload the customer's review screenshot or paste the review message. A screenshot is used to extract the testimonial and is carried into image generation as a factual reference.
+For review posters, select `review` in the Generation Lab and either upload the customer's review screenshot or paste the review message. An uploaded screenshot is used intact as the visible testimonial: it is not transcribed, rewritten, recreated, cropped, masked, or duplicated as separate quote text. Pasted review text remains a fallback when no screenshot is available.
 
 ## Admin content studio
 

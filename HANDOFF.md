@@ -13,7 +13,11 @@ The admin dashboard now has two awareness-content choices:
 
 The sheet must be shared as “Anyone with the link can view.” It requires a `Date` column and accepts `YYYY-MM-DD` or `DD/MM/YYYY`; all other named columns are supplied to Gemini.
 
-For `review` posters, the Generation Lab accepts either a customer review screenshot or pasted review text. The Worker uploads a supplied screenshot to R2, sends it to Gemini's text model to extract the real quote/rating/attribution, saves its URL in the brief, and supplies the same screenshot to the image model as factual evidence. Pasted text is included directly as the factual source.
+For `review` posters, the Generation Lab accepts either a customer review screenshot or pasted review text. A supplied screenshot is uploaded to R2 and used intact as the primary visible testimonial. The prompt forbids transcription, recreation, cropping, masking, restyling, or duplicate quote text; the Worker also clears model-generated `reviewQuote` and `reviewAttribution` fields before image generation. Pasted text remains a fallback when no screenshot exists.
+
+Migration `0009_review_screenshot_prompt.sql` updates the saved Review prompt for existing businesses.
+
+Migration `0010_creative_review_headlines.sql` adds varied clinic-owned social-proof headlines around the intact screenshot, with examples such as “Another reason to smile” and safeguards against invented counts or outcomes.
 
 Migration:
 

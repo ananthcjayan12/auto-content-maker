@@ -142,7 +142,7 @@ export function renderDashboard(input: {
     anniversary:
       "Use only verified milestone details. Never allow AI to invent years, counts, or achievements.",
     review:
-      "Upload a customer screenshot or paste their message below. The review is treated as factual evidence.",
+      "Upload a customer screenshot to use it intact as the visible testimonial. Pasted text remains available as a fallback.",
     general:
       "Create a clinic update, reminder, service message, or relevant general greeting.",
   };
@@ -355,7 +355,7 @@ export function renderDashboard(input: {
                   <input id="reviewScreenshot" name="reviewScreenshot" type="file" accept="image/png,image/jpeg,image/webp">
                   <label for="reviewMessage">Paste the review message (option 2)</label>
                   <textarea id="reviewMessage" name="reviewMessage" placeholder="Paste the customer's review exactly as received"></textarea>
-                  <p class="help">For review posters, provide either a screenshot or the review text. If both are supplied, the screenshot remains the primary evidence.</p>
+                  <p class="help">For review posters, provide either a screenshot or the review text. An uploaded screenshot is placed intact as the testimonial; its contents are not extracted or rewritten. If both are supplied, the screenshot takes priority.</p>
                 </div>
                 <div class="actions">
                   <button type="button" id="generateBrief">1. Prepare content</button>

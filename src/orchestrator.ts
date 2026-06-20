@@ -431,7 +431,7 @@ function buildBriefPrompt(input: {
     ? `\n\nSUPPLIED CONTENT FROM TODAY'S GOOGLE SHEET ROW\n${JSON.stringify(input.suppliedContent, null, 2)}\nEdit this copy for clarity and mobile readability while preserving every fact and meaning. Do not replace it with a different topic.`
     : "";
   const reviewInstruction = input.hasReviewScreenshot
-    ? "\n\nA customer review screenshot is attached. Read the actual review, rating, and attribution from it. Preserve the meaning, do not invent missing details, and create the review-poster JSON from that evidence."
+    ? "\n\nA customer review screenshot is attached. Do not extract, transcribe, paraphrase, or repeat its review text in the JSON. The screenshot itself will be used as the visible testimonial. Keep reviewQuote and reviewAttribution empty. Generate one short, warm, original social-proof headline for the clinic outside the screenshot, plus an optional concise CTA. Creative directions include “A new review,” “Another happy smile,” “Kind words from our patient,” “Another reason to smile,” and “Your trust makes us smile”; vary the wording naturally and do not invent counts, outcomes, or medical results."
     : input.reviewMessage
       ? `\n\nSUPPLIED CUSTOMER REVIEW MESSAGE\n${input.reviewMessage}\nUse this exact customer-supplied review as the factual source. You may shorten it only for mobile readability without changing its meaning. Do not invent a rating, name, treatment, or result.`
       : "";
@@ -485,9 +485,12 @@ export async function generatePosterBrief(input: {
     },
   });
   const rawText = textParts(response).join("\n").trim();
+  const parsedBrief = jsonFromModelText(rawText);
   return {
     prompt,
-    brief: jsonFromModelText(rawText),
+    brief: input.reviewScreenshot
+      ? { ...parsedBrief, reviewQuote: "", reviewAttribution: "" }
+      : parsedBrief,
     rawText,
     usage: usageFromResponse(response),
   };
@@ -526,6 +529,16 @@ export function buildImagePrompt(input: {
     fillPromptTemplate(promptSettings.masterImagePromptTemplate, variables),
     fillPromptTemplate(promptSettings.posterTypePrompts[posterType], variables),
     fillPromptTemplate(promptSettings.referencePromptTemplate, variables),
+    ...(posterType === "review" && typeof brief.reviewScreenshotUrl === "string"
+      ? [
+          `REVIEW SCREENSHOT — PRIMARY TESTIMONIAL CONTENT
+- Place the attached customer review screenshot prominently as one intact, readable rectangular image within the poster.
+- Preserve the screenshot exactly as supplied. Do not redraw, recreate, transcribe, paraphrase, summarize, crop, mask, blur, stylize, recolor, or replace it.
+- Do not write the review quote, patient identity, rating, attribution, date, or platform details anywhere else on the poster.
+- Add one short, warm clinic-owned social-proof headline above or around the screenshot. Keep it distinct from the review text and vary it naturally between posters.
+- Design the clinic-branded layout around the screenshot. The screenshot must remain legible and visually dominant.`,
+        ]
+      : []),
     `TODAY'S CONTENT — CHANGE ONLY THESE CONTENT AREAS\n${JSON.stringify(brief, null, 2)}`,
     `RENDER METADATA\nDate: ${date}\nGeneration run id: ${runId}\nOutput: ${settings.aspectRatio} at ${settings.imageResolution}`,
   ];
@@ -608,7 +621,7 @@ async function generatePosterImage(input: {
           ...reviewScreenshot,
           label: "Customer review screenshot",
           guidance:
-            "Use this as factual content evidence for the testimonial. Do not copy the screenshot UI or invent review details.",
+            "This exact screenshot is the primary testimonial content. Place it intact and readable in the poster; do not extract, retype, redraw, crop, mask, restyle, or replace it.",
         }
       : null,
     logo

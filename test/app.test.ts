@@ -1078,13 +1078,33 @@ describe("daily poster packet worker", () => {
       dailyBrief: Record<string, unknown>;
     };
     expect(response.status).toBe(200);
-    expect(body.dailyBrief.reviewQuote).toBe("Wonderful and gentle care");
+    expect(body.dailyBrief.reviewQuote).toBe("");
+    expect(body.dailyBrief.reviewAttribution).toBe("");
     expect(body.dailyBrief.reviewScreenshotUrl).toMatch(
       /\/assets\/businesses\/dr-poojas-smile-craft\/reviews\//,
     );
     const geminiBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(geminiBody.contents[0].parts[1].inline_data.mime_type).toBe(
       "image/png",
+    );
+    expect(String(geminiBody.contents[0].parts[0].text)).toContain(
+      "Do not extract, transcribe, paraphrase, or repeat",
+    );
+    expect(String(geminiBody.contents[0].parts[0].text)).toContain(
+      "Another reason to smile",
+    );
+    const savedReviewPrompt = String(
+      (await store.getGeneratedPoster(brand.businessSlug, "review", today))
+        ?.prompt,
+    );
+    expect(savedReviewPrompt).toContain(
+      "REVIEW SCREENSHOT — PRIMARY TESTIMONIAL CONTENT",
+    );
+    expect(savedReviewPrompt).toContain(
+      "Place the attached customer review screenshot prominently",
+    );
+    expect(savedReviewPrompt).toContain(
+      "Add one short, warm clinic-owned social-proof headline",
     );
   });
 
