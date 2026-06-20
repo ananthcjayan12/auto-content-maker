@@ -10,8 +10,8 @@ import { imageContentTypeForKey, isUploadedFile, uploadImage } from "./assets";
 import { applyDrPoojaSmileCraftPreset } from "./brand-presets";
 import {
   defaultContentSourceSettings,
-  findTodaySheetContent,
   googleSheetCsvUrl,
+  resolveAwarenessContent,
 } from "./content-sources";
 import {
   DEFAULT_GENERATION_SETTINGS,
@@ -696,15 +696,11 @@ app.post("/admin/:businessSlug/generation-lab/brief", async (c) => {
   const sourceSettings =
     (await store.getContentSourceSettings(businessSlug)) ??
     defaultContentSourceSettings(businessSlug);
-  const suppliedContent =
-    posterType === "awareness" &&
-    sourceSettings.awarenessMode === "sheet_first" &&
-    sourceSettings.googleSheetUrl
-      ? await findTodaySheetContent(
-          sourceSettings.googleSheetUrl,
-          resolvedDate,
-        ).catch(() => null)
+  const sheetLookup =
+    posterType === "awareness"
+      ? await resolveAwarenessContent(sourceSettings, resolvedDate)
       : null;
+  const suppliedContent = sheetLookup?.row ?? null;
   const reviewFile = form.get("reviewScreenshot");
   const reviewMessage = formString(form, "reviewMessage");
   let reviewScreenshotUrl: string | null = null;
@@ -746,7 +742,11 @@ app.post("/admin/:businessSlug/generation-lab/brief", async (c) => {
   });
   const resolvedBrief: Record<string, unknown> = {
     ...brief.brief,
-    contentSource: suppliedContent ? "google_sheet" : "ai_generated",
+    contentSource: sheetLookup?.source ?? "ai_generated",
+    ...(sheetLookup ? { contentSourceReason: sheetLookup.reason } : {}),
+    ...(sheetLookup?.warning
+      ? { contentSourceWarning: sheetLookup.warning }
+      : {}),
     ...(suppliedContent ? { sourceRow: suppliedContent } : {}),
     ...(reviewScreenshotUrl ? { reviewScreenshotUrl } : {}),
     ...(reviewMessage ? { suppliedReviewMessage: reviewMessage } : {}),
@@ -795,6 +795,8 @@ app.post("/admin/:businessSlug/generation-lab/brief", async (c) => {
     dailyBriefPrompt: brief.prompt,
     dailyBrief: resolvedBrief,
     contentSource: resolvedBrief.contentSource,
+    contentSourceReason: resolvedBrief.contentSourceReason,
+    contentSourceWarning: resolvedBrief.contentSourceWarning,
     rawText: brief.rawText,
     imagePrompt,
     generatedPoster: savedGeneratedPoster,
@@ -1325,15 +1327,11 @@ app.post(
     const sourceSettings =
       (await store.getContentSourceSettings(result.brand.businessSlug)) ??
       defaultContentSourceSettings(result.brand.businessSlug);
-    const suppliedContent =
-      result.posterType === "awareness" &&
-      sourceSettings.awarenessMode === "sheet_first" &&
-      sourceSettings.googleSheetUrl
-        ? await findTodaySheetContent(
-            sourceSettings.googleSheetUrl,
-            result.resolvedDate,
-          ).catch(() => null)
+    const sheetLookup =
+      result.posterType === "awareness"
+        ? await resolveAwarenessContent(sourceSettings, result.resolvedDate)
         : null;
+    const suppliedContent = sheetLookup?.row ?? null;
     const brief = await generatePosterBrief({
       apiKey,
       model,
@@ -1347,7 +1345,11 @@ app.post(
     });
     const resolvedBrief: Record<string, unknown> = {
       ...brief.brief,
-      contentSource: suppliedContent ? "google_sheet" : "ai_generated",
+      contentSource: sheetLookup?.source ?? "ai_generated",
+      ...(sheetLookup ? { contentSourceReason: sheetLookup.reason } : {}),
+      ...(sheetLookup?.warning
+        ? { contentSourceWarning: sheetLookup.warning }
+        : {}),
       ...(suppliedContent ? { sourceRow: suppliedContent } : {}),
     };
 
@@ -1361,6 +1363,8 @@ app.post(
       dailyBriefPrompt: brief.prompt,
       dailyBrief: resolvedBrief,
       contentSource: resolvedBrief.contentSource,
+      contentSourceReason: resolvedBrief.contentSourceReason,
+      contentSourceWarning: resolvedBrief.contentSourceWarning,
       rawText: brief.rawText,
       imagePrompt: buildImagePrompt({
         brand: result.brand,

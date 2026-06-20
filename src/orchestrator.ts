@@ -1,7 +1,7 @@
 import { imageContentTypeForKey } from "./assets";
 import {
   defaultContentSourceSettings,
-  findTodaySheetContent,
+  resolveAwarenessContent,
 } from "./content-sources";
 import { DEFAULT_TIMEZONE, resolveDate, todayInTimezone } from "./date";
 import { estimateGenerationCost, usageFromResponse } from "./gemini-pricing";
@@ -912,15 +912,11 @@ export async function runPosterOrchestrator(input: {
     const sourceSettings =
       (await store.getContentSourceSettings(businessSlug)) ??
       defaultContentSourceSettings(businessSlug);
-    const suppliedContent =
-      posterType === "awareness" &&
-      sourceSettings.awarenessMode === "sheet_first" &&
-      sourceSettings.googleSheetUrl
-        ? await findTodaySheetContent(
-            sourceSettings.googleSheetUrl,
-            date,
-          ).catch(() => null)
+    const sheetLookup =
+      posterType === "awareness"
+        ? await resolveAwarenessContent(sourceSettings, date)
         : null;
+    const suppliedContent = sheetLookup?.row ?? null;
     const briefResult = await generatePosterBrief({
       apiKey,
       model: textModel,
@@ -934,7 +930,11 @@ export async function runPosterOrchestrator(input: {
     });
     const resolvedBrief: Record<string, unknown> = {
       ...briefResult.brief,
-      contentSource: suppliedContent ? "google_sheet" : "ai_generated",
+      contentSource: sheetLookup?.source ?? "ai_generated",
+      ...(sheetLookup ? { contentSourceReason: sheetLookup.reason } : {}),
+      ...(sheetLookup?.warning
+        ? { contentSourceWarning: sheetLookup.warning }
+        : {}),
       ...(suppliedContent ? { sourceRow: suppliedContent } : {}),
     };
     const prompt = buildImagePrompt({

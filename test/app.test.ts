@@ -19,6 +19,7 @@ import { todayInTimezone } from "../src/date";
 import {
   findTodaySheetContent,
   googleSheetCsvUrl,
+  resolveAwarenessContent,
 } from "../src/content-sources";
 
 class MemoryStore implements PosterStore {
@@ -265,7 +266,7 @@ describe("daily poster packet worker", () => {
         "https://docs.google.com/spreadsheets/d/sheet-id/edit#gid=42",
       ),
     ).toBe(
-      "https://docs.google.com/spreadsheets/d/sheet-id/export?format=csv&gid=42",
+      "https://docs.google.com/spreadsheets/d/sheet-id/gviz/tq?tqx=out:csv&gid=42",
     );
     await expect(
       findTodaySheetContent(
@@ -276,6 +277,29 @@ describe("daily poster packet worker", () => {
       Date: "18/06/2026",
       Headline: "Brush before bed",
       "Supporting Text": "A small habit, every night",
+    });
+  });
+
+  it("reports the exact reason when Google Sheets falls back to AI", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("Unavailable", { status: 400 })),
+    );
+    await expect(
+      resolveAwarenessContent(
+        {
+          businessSlug: brand.businessSlug,
+          awarenessMode: "sheet_first",
+          googleSheetUrl:
+            "https://docs.google.com/spreadsheets/d/sheet-id/edit?usp=sharing",
+        },
+        today,
+      ),
+    ).resolves.toMatchObject({
+      row: null,
+      source: "ai_generated",
+      reason: "sheet_fetch_failed",
+      warning: expect.stringContaining("HTTP 400"),
     });
   });
 

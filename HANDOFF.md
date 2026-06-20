@@ -43,6 +43,16 @@ The admin dashboard is now organized as a content studio:
 
 The local browser QA covered Awareness on desktop and Review on a 390 px mobile viewport.
 
+## 2026-06-20 Google Sheets CSV fix
+
+Google's `/export?format=csv` endpoint returned HTTP 400 for a valid shared sheet. Sheet links are now converted to the working GViz endpoint:
+
+```text
+/gviz/tq?tqx=out:csv&gid=...
+```
+
+Awareness lookups now record `contentSourceReason` as `matched`, `ai_only`, `sheet_not_configured`, `no_matching_row`, or `sheet_fetch_failed`. Missing rows and fetch failures still use the safe AI fallback, but the dashboard shows the exact warning and the reason is saved in the generated brief.
+
 ## 2026-06-18 update: new Gemini orchestrator flow
 
 The direction changed from “ChatGPT Scheduled Task opens the public page and generates the poster inside ChatGPT” to the Worker-driven flow in `new_flow.md`.

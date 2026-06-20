@@ -4,6 +4,8 @@
 
 In the admin dashboard, awareness posters can use either **Google Sheet first, then AI fallback** or **AI only**. A shared sheet needs a `Date` column (`YYYY-MM-DD` or `DD/MM/YYYY`). When today's row exists, only that row is sent to Gemini for editing; the whole sheet is never included. When it does not, the normal AI brief is generated. Import [`sample-awareness-content.csv`](sample-awareness-content.csv) into Google Sheets to start.
 
+Shared Google Sheet links are read through Google's GViz CSV endpoint. The generated brief records whether today's row matched or why the workflow fell back to AI, and the Generation Lab displays fetch/matching warnings directly.
+
 For review posters, select `review` in the Generation Lab and either upload the customer's review screenshot or paste the review message. A screenshot is used to extract the testimonial and is carried into image generation as a factual reference.
 
 ## Admin content studio

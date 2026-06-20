@@ -560,7 +560,8 @@ export function renderDashboard(input: {
             briefPreview.value = JSON.stringify(body.dailyBrief || {}, null, 2);
             statusValue.textContent = 'brief_ready';
             var source = body.contentSource === 'google_sheet' ? 'Google Sheet content found and edited.' : 'AI content generated.';
-            showMessage(source + ' You can edit the prompt before rendering the image.', false);
+            var detail = body.contentSourceWarning ? ' ' + body.contentSourceWarning : '';
+            showMessage(source + detail + ' You can edit the prompt before rendering the image.', Boolean(body.contentSourceWarning));
           } catch (error) {
             showMessage(error instanceof Error ? error.message : 'Brief generation failed.', true);
           } finally {

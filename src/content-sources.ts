@@ -15,7 +15,63 @@ export function googleSheetCsvUrl(value: string): string {
   if (!match) throw new Error("Google Sheet URL is invalid.");
   const gid =
     url.searchParams.get("gid") || url.hash.match(/gid=(\d+)/)?.[1] || "0";
-  return `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=csv&gid=${gid}`;
+  return `https://docs.google.com/spreadsheets/d/${match[1]}/gviz/tq?tqx=out:csv&gid=${gid}`;
+}
+
+export type SheetLookupReason =
+  | "matched"
+  | "ai_only"
+  | "sheet_not_configured"
+  | "no_matching_row"
+  | "sheet_fetch_failed";
+
+export interface SheetLookupResult {
+  row: Record<string, string> | null;
+  source: "google_sheet" | "ai_generated";
+  reason: SheetLookupReason;
+  warning: string | null;
+}
+
+export async function resolveAwarenessContent(
+  settings: ContentSourceSettings,
+  date: string,
+): Promise<SheetLookupResult> {
+  if (settings.awarenessMode === "ai_only") {
+    return {
+      row: null,
+      source: "ai_generated",
+      reason: "ai_only",
+      warning: null,
+    };
+  }
+  if (!settings.googleSheetUrl) {
+    return {
+      row: null,
+      source: "ai_generated",
+      reason: "sheet_not_configured",
+      warning: null,
+    };
+  }
+  try {
+    const row = await findTodaySheetContent(settings.googleSheetUrl, date);
+    return row
+      ? { row, source: "google_sheet", reason: "matched", warning: null }
+      : {
+          row: null,
+          source: "ai_generated",
+          reason: "no_matching_row",
+          warning: `No Google Sheet row matched ${date}; AI fallback was used.`,
+        };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Google Sheet lookup failed.";
+    return {
+      row: null,
+      source: "ai_generated",
+      reason: "sheet_fetch_failed",
+      warning: `${message} AI fallback was used.`,
+    };
+  }
 }
 
 function parseCsv(text: string): string[][] {
