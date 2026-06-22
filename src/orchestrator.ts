@@ -18,6 +18,7 @@ import {
   fillPromptTemplate,
   normalizePromptSettings,
   promptVariables,
+  REFERENCE_REMAKE_IMAGE_OVERRIDE,
 } from "./prompt-settings";
 import type {
   Bindings,
@@ -43,6 +44,13 @@ export interface ImageBase64Reference {
 interface LabeledImageReference extends ImageBase64Reference {
   label: string;
   guidance: string;
+}
+
+function hasSourcePoster(reference: PosterTypeReference | null): boolean {
+  return Boolean(
+    reference?.referenceImageUrls.length ||
+    reference?.productionReferenceImageUrl,
+  );
 }
 
 export function baseUrl(requestUrl: string, configured?: string): string {
@@ -414,6 +422,8 @@ function buildBriefPrompt(input: {
   suppliedContent?: Record<string, string> | null;
   hasReviewScreenshot?: boolean;
   reviewMessage?: string | null;
+  referenceMessage?: string | null;
+  hasReferencePoster?: boolean;
 }): string {
   const { brand, posterType, typeReference, date, promptSettings } = input;
   const posterTypePrompt = promptSettings.posterTypePrompts[posterType];
@@ -435,7 +445,14 @@ function buildBriefPrompt(input: {
     : input.reviewMessage
       ? `\n\nSUPPLIED CUSTOMER REVIEW MESSAGE\n${input.reviewMessage}\nUse this exact customer-supplied review as the factual source. You may shorten it only for mobile readability without changing its meaning. Do not invent a rating, name, treatment, or result.`
       : "";
-  return basePrompt + sourceInstruction + reviewInstruction;
+  const referenceInstruction = input.referenceMessage
+    ? `\n\nUSER'S POSTER MESSAGE — PRIMARY CONTENT SOURCE\n${input.referenceMessage}\nBase the poster content on this message. Preserve its subject, intent, and every supplied fact. You may polish and shorten it for a mobile poster, but do not replace it with an AI-chosen topic and do not add prices, offers, claims, dates, services, or outcomes that the user did not provide. The attached source poster controls visual design only.`
+    : input.hasReferencePoster
+      ? `\n\nSOURCE POSTER CONTENT FALLBACK\nA source poster is attached. Identify only its broad communication idea or poster purpose, then adapt that idea into safe dental-clinic copy for ${brand.businessName}. Do not copy exact wording, competitor identity, contact details, prices, offers, dates, claims, credentials, people, products, or unsupported treatment outcomes. Keep the result relevant to a dental clinic and concise enough for a mobile poster.`
+      : "";
+  return (
+    basePrompt + sourceInstruction + reviewInstruction + referenceInstruction
+  );
 }
 
 export async function generatePosterBrief(input: {
@@ -450,6 +467,8 @@ export async function generatePosterBrief(input: {
   suppliedContent?: Record<string, string> | null;
   reviewScreenshot?: ImageBase64Reference | null;
   reviewMessage?: string | null;
+  referencePoster?: ImageBase64Reference | null;
+  referenceMessage?: string | null;
 }): Promise<{
   prompt: string;
   brief: Record<string, unknown>;
@@ -466,6 +485,8 @@ export async function generatePosterBrief(input: {
     suppliedContent: input.suppliedContent,
     hasReviewScreenshot: Boolean(input.reviewScreenshot),
     reviewMessage: input.reviewMessage,
+    referenceMessage: input.referenceMessage,
+    hasReferencePoster: Boolean(input.referencePoster),
   });
   const parts: Record<string, unknown>[] = [{ text: prompt }];
   if (input.reviewScreenshot) {
@@ -473,6 +494,14 @@ export async function generatePosterBrief(input: {
       inline_data: {
         data: input.reviewScreenshot.base64,
         mime_type: input.reviewScreenshot.contentType,
+      },
+    });
+  }
+  if (input.referencePoster) {
+    parts.push({
+      inline_data: {
+        data: input.referencePoster.base64,
+        mime_type: input.referencePoster.contentType,
       },
     });
   }
@@ -529,6 +558,7 @@ export function buildImagePrompt(input: {
     fillPromptTemplate(promptSettings.masterImagePromptTemplate, variables),
     fillPromptTemplate(promptSettings.posterTypePrompts[posterType], variables),
     fillPromptTemplate(promptSettings.referencePromptTemplate, variables),
+    ...(posterType === "reference" ? [REFERENCE_REMAKE_IMAGE_OVERRIDE] : []),
     ...(posterType === "review" && typeof brief.reviewScreenshotUrl === "string"
       ? [
           `REVIEW SCREENSHOT — PRIMARY TESTIMONIAL CONTENT
@@ -637,7 +667,9 @@ async function generatePosterImage(input: {
           ...board,
           label: "Brand reference board",
           guidance:
-            "Attached brand board; follow the editable reference-image instructions in the prompt.",
+            posterType === "reference"
+              ? "Use this brand board only for the business color palette and identity. Ignore its typography, layout, spacing, composition, and image treatment."
+              : "Attached brand board; follow the editable reference-image instructions in the prompt.",
         }
       : null,
     ...posterReferences
@@ -647,9 +679,14 @@ async function generatePosterImage(input: {
       .slice(0, styleReferenceLimit)
       .map((reference, index) => ({
         ...reference,
-        label: `${posterType} poster style reference ${index + 1}`,
+        label:
+          posterType === "reference"
+            ? `Source poster to remake ${index + 1}`
+            : `${posterType} poster style reference ${index + 1}`,
         guidance:
-          "Attached poster-type design reference; follow the editable reference-image instructions in the prompt.",
+          posterType === "reference"
+            ? "This source poster controls layout, typography, hierarchy, spacing, and visual treatment. Rebuild its design language with today's content and the attached business logo and brand colors; do not copy competitor identity, facts, or wording."
+            : "Attached poster-type design reference; follow the editable reference-image instructions in the prompt.",
       })),
   ].filter((reference): reference is LabeledImageReference =>
     Boolean(reference),
@@ -756,6 +793,11 @@ export async function generatePosterImageFromPrompt(input: {
   const brand = await store.getBrand(businessSlug);
   if (!brand) throw new Error("Business brand system not found.");
   const typeReference = await store.getTypeReference(businessSlug, posterType);
+  if (posterType === "reference" && !hasSourcePoster(typeReference)) {
+    throw new Error(
+      "Upload at least one source poster before generating a Reference remake.",
+    );
+  }
   const existing = await store.getGeneratedPoster(
     businessSlug,
     posterType,
@@ -880,6 +922,11 @@ export async function runPosterOrchestrator(input: {
   const brand = await store.getBrand(businessSlug);
   if (!brand) throw new Error("Business brand system not found.");
   const typeReference = await store.getTypeReference(businessSlug, posterType);
+  if (posterType === "reference" && !hasSourcePoster(typeReference)) {
+    throw new Error(
+      "Upload at least one source poster before generating a Reference remake.",
+    );
+  }
 
   const started = await store.upsertGeneratedPoster({
     businessSlug,
@@ -930,6 +977,17 @@ export async function runPosterOrchestrator(input: {
         ? await resolveAwarenessContent(sourceSettings, date)
         : null;
     const suppliedContent = sheetLookup?.row ?? null;
+    const referencePosterUrl =
+      posterType === "reference"
+        ? (typeReference?.referenceImageUrls[0] ??
+          typeReference?.productionReferenceImageUrl ??
+          null)
+        : null;
+    const referencePoster = await imageUrlToBase64({
+      url: referencePosterUrl,
+      env,
+      publicBaseUrl: base,
+    });
     const briefResult = await generatePosterBrief({
       apiKey,
       model: textModel,
@@ -940,10 +998,13 @@ export async function runPosterOrchestrator(input: {
       contextJsonUrl,
       promptSettings,
       suppliedContent,
+      referencePoster,
     });
     const resolvedBrief: Record<string, unknown> = {
       ...briefResult.brief,
-      contentSource: sheetLookup?.source ?? "ai_generated",
+      contentSource:
+        sheetLookup?.source ??
+        (posterType === "reference" ? "reference_poster" : "ai_generated"),
       ...(sheetLookup ? { contentSourceReason: sheetLookup.reason } : {}),
       ...(sheetLookup?.warning
         ? { contentSourceWarning: sheetLookup.warning }

@@ -822,6 +822,17 @@ app.post("/admin/:businessSlug/generation-lab/brief", async (c) => {
       store.getGenerationSettings(businessSlug),
       store.getPromptSettings(businessSlug),
     ]);
+  if (
+    posterType === "reference" &&
+    !typeReference?.referenceImageUrls.length &&
+    !typeReference?.productionReferenceImageUrl
+  ) {
+    return jsonError(
+      c,
+      400,
+      "Upload at least one source poster in Reference remake before preparing content.",
+    );
+  }
   const generationSettings =
     savedGenerationSettings ?? defaultGenerationSettings(businessSlug, c.env);
   const promptSettings = normalizePromptSettings(
@@ -840,8 +851,10 @@ app.post("/admin/:businessSlug/generation-lab/brief", async (c) => {
   const suppliedContent = sheetLookup?.row ?? null;
   const reviewFile = form.get("reviewScreenshot");
   const reviewMessage = formString(form, "reviewMessage");
+  const referenceMessage = formString(form, "referenceMessage").slice(0, 500);
   let reviewScreenshotUrl: string | null = null;
   let reviewScreenshot = null;
+  let referencePoster = null;
   if (posterType === "review") {
     if (!isUploadedFile(reviewFile) && !reviewMessage) {
       return jsonError(
@@ -864,6 +877,20 @@ app.post("/admin/:businessSlug/generation-lab/brief", async (c) => {
       });
     }
   }
+  if (posterType === "reference") {
+    const referencePosterUrl =
+      typeReference?.referenceImageUrls[0] ??
+      typeReference?.productionReferenceImageUrl ??
+      null;
+    referencePoster = await imageUrlToBase64({
+      url: referencePosterUrl,
+      env: c.env,
+      publicBaseUrl: base,
+    });
+    if (!referencePoster) {
+      return jsonError(c, 400, "The saved source poster could not be loaded.");
+    }
+  }
   const brief = await generatePosterBrief({
     apiKey,
     model: generationSettings.textModel,
@@ -876,10 +903,18 @@ app.post("/admin/:businessSlug/generation-lab/brief", async (c) => {
     suppliedContent,
     reviewScreenshot,
     reviewMessage,
+    referencePoster,
+    referenceMessage,
   });
   const resolvedBrief: Record<string, unknown> = {
     ...brief.brief,
-    contentSource: sheetLookup?.source ?? "ai_generated",
+    contentSource:
+      sheetLookup?.source ??
+      (posterType === "reference"
+        ? referenceMessage
+          ? "user_message"
+          : "reference_poster"
+        : "ai_generated"),
     ...(sheetLookup ? { contentSourceReason: sheetLookup.reason } : {}),
     ...(sheetLookup?.warning
       ? { contentSourceWarning: sheetLookup.warning }
@@ -887,6 +922,7 @@ app.post("/admin/:businessSlug/generation-lab/brief", async (c) => {
     ...(suppliedContent ? { sourceRow: suppliedContent } : {}),
     ...(reviewScreenshotUrl ? { reviewScreenshotUrl } : {}),
     ...(reviewMessage ? { suppliedReviewMessage: reviewMessage } : {}),
+    ...(referenceMessage ? { suppliedReferenceMessage: referenceMessage } : {}),
   };
   const imagePrompt = buildImagePrompt({
     brand,
@@ -1452,6 +1488,17 @@ app.post(
     if (!apiKey) {
       return jsonError(c, 500, "GEMINI_API_KEY is not configured.");
     }
+    if (
+      result.posterType === "reference" &&
+      !result.typeReference?.referenceImageUrls.length &&
+      !result.typeReference?.productionReferenceImageUrl
+    ) {
+      return jsonError(
+        c,
+        400,
+        "Upload at least one source poster before preparing a Reference remake.",
+      );
+    }
 
     const base = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
     const contextUrl = `${base}/daily-poster/${result.brand.businessSlug}/${result.posterType}/today`;
@@ -1469,6 +1516,20 @@ app.post(
         ? await resolveAwarenessContent(sourceSettings, result.resolvedDate)
         : null;
     const suppliedContent = sheetLookup?.row ?? null;
+    const referencePosterUrl =
+      result.posterType === "reference"
+        ? (result.typeReference?.referenceImageUrls[0] ??
+          result.typeReference?.productionReferenceImageUrl ??
+          null)
+        : null;
+    const referencePoster = await imageUrlToBase64({
+      url: referencePosterUrl,
+      env: c.env,
+      publicBaseUrl: base,
+    });
+    if (result.posterType === "reference" && !referencePoster) {
+      return jsonError(c, 400, "The saved source poster could not be loaded.");
+    }
     const brief = await generatePosterBrief({
       apiKey,
       model,
@@ -1479,10 +1540,15 @@ app.post(
       contextJsonUrl,
       promptSettings: result.promptSettings,
       suppliedContent,
+      referencePoster,
     });
     const resolvedBrief: Record<string, unknown> = {
       ...brief.brief,
-      contentSource: sheetLookup?.source ?? "ai_generated",
+      contentSource:
+        sheetLookup?.source ??
+        (result.posterType === "reference"
+          ? "reference_poster"
+          : "ai_generated"),
       ...(sheetLookup ? { contentSourceReason: sheetLookup.reason } : {}),
       ...(sheetLookup?.warning
         ? { contentSourceWarning: sheetLookup.warning }

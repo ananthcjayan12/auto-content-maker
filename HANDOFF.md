@@ -4,6 +4,26 @@ Last updated: 2026-06-18
 Project path: `/Users/ananthu/Desktop/new_repos/auto-content-maker`  
 Project name: `daily-poster-packet`
 
+## 2026-06-22 reference-remake poster type
+
+The admin workspace now includes **Reference remake**. This manual poster type is for uploading a competitor or inspiration poster and rebuilding its visual direction for the saved business.
+
+- the uploaded source poster controls layout, typography style, hierarchy, spacing, image treatment, accents, and visual rhythm;
+- the saved business design system contributes the original logo, business identity, contact details, and brand colors;
+- saved brand-board typography and layout are explicitly ignored for this type;
+- competitor identity, contact details, claims, offers, imagery, and exact wording must not be copied;
+- the source poster is required before content can be prepared;
+- reference notes are used to describe the new message, offer, event, or CTA;
+- the Create section also accepts an optional per-poster one-line message; when
+  supplied, that message is the content source and Gemini only polishes it;
+- when the one-line message is blank, Gemini reads the uploaded source poster
+  and adapts only its broad communication idea into safe dental-clinic copy;
+- this type is intentionally excluded from unattended automation because every run needs a source poster.
+
+Migration `0012_reference_remake_poster_type.sql` rebuilds the three tables
+whose original SQLite CHECK constraints only allowed the first six poster
+types.
+
 ## 2026-06-19 content-source and review workflow update
 
 The admin dashboard now has two awareness-content choices:

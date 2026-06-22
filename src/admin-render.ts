@@ -46,7 +46,7 @@ const styles = `
   *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--soft);color:var(--ink);font:15px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
   a{color:var(--teal)}.shell{width:min(1240px,calc(100% - 32px));margin:24px auto 72px}.top,.card,.workspace{background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}
   .top{padding:24px 28px;display:flex;align-items:center;justify-content:space-between;gap:20px}.top h1{margin:0;font-size:clamp(1.6rem,3vw,2.35rem);letter-spacing:-.035em}.eyebrow{margin:0 0 3px;color:var(--teal);font-size:.72rem;font-weight:850;letter-spacing:.12em;text-transform:uppercase}
-  .workspace{position:sticky;z-index:20;top:10px;margin-top:16px;padding:18px 20px}.workspace-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:12px}.workspace h2{font-size:1rem;margin:0}.workspace .help{margin:2px 0 0}.type-tabs{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}.type-tab{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#f8fbfa;color:var(--ink);font-weight:760;text-decoration:none;text-transform:capitalize}.type-tab:hover{border-color:#9bc9c6;background:#f0f8f7}.type-tab.active{background:var(--ink);border-color:var(--ink);color:#fff}.type-count{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:#e5f2f0;color:var(--teal-strong);font-size:.72rem}.type-tab.active .type-count{background:rgba(255,255,255,.16);color:#fff}
+  .workspace{position:sticky;z-index:20;top:10px;margin-top:16px;padding:18px 20px}.workspace-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:12px}.workspace h2{font-size:1rem;margin:0}.workspace .help{margin:2px 0 0}.type-tabs{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}.type-tab{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#f8fbfa;color:var(--ink);font-weight:760;text-decoration:none;text-transform:capitalize}.type-tab:hover{border-color:#9bc9c6;background:#f0f8f7}.type-tab.active{background:var(--ink);border-color:var(--ink);color:#fff}.type-count{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:#e5f2f0;color:var(--teal-strong);font-size:.72rem}.type-tab.active .type-count{background:rgba(255,255,255,.16);color:#fff}
   .section-nav{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 0}.section-nav a{padding:7px 11px;border-radius:999px;background:#eaf3f2;color:var(--ink);font-size:.82rem;font-weight:750;text-decoration:none}
   .grid{display:grid;grid-template-columns:1.35fr .65fr;gap:18px;margin-top:18px}.card{padding:26px;scroll-margin-top:170px}.wide{grid-column:1/-1}.create-panel{order:1}.reference-panel{order:2}.content-panel{order:3}.gallery-panel{order:4}.automation-panel{order:5}.brand-panel{order:6}.advanced-panel{order:7}.help-panel{order:8}h2{margin:0 0 6px;font-size:1.35rem;letter-spacing:-.015em}h3{margin:24px 0 10px}.help{margin:0 0 18px;color:var(--muted)}
   .section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.section-kicker{font-size:.72rem;color:var(--teal);font-weight:850;text-transform:uppercase;letter-spacing:.1em}.current-type{display:inline-flex;padding:7px 11px;border-radius:999px;background:#e7f3f1;color:var(--teal-strong);font-weight:800;text-transform:capitalize;white-space:nowrap}
@@ -143,6 +143,7 @@ export function renderDashboard(input: {
     anniversary: "Anniversary",
     review: "Review",
     general: "General",
+    reference: "Reference remake",
   };
   const typeGuidance: Record<PosterType, string> = {
     awareness:
@@ -157,6 +158,8 @@ export function renderDashboard(input: {
       "Upload a customer screenshot to use it intact as the visible testimonial. Pasted text remains available as a fallback.",
     general:
       "Create a clinic update, reminder, service message, or relevant general greeting.",
+    reference:
+      "Upload a source poster first. Its layout and typography lead the remake; your saved logo, identity, and brand colors replace the source branding.",
   };
   const typeTabs = POSTER_TYPES.map((type) => {
     const count = allTypeReferences[type]?.referenceImageUrls.length ?? 0;
@@ -285,8 +288,12 @@ export function renderDashboard(input: {
               <div><label for="localTime">Clinic delivery schedule</label><input id="localTime" name="localTime" type="time" step="300" value="${escapeHtml(automationSettings.localTime)}" required><p class="mini">Timezone: ${escapeHtml(automationTimezone)}. If this time has already passed today, enabling the schedule can run it on the next heartbeat.</p></div>
               <div><label>Poster types to generate</label><div class="check-grid">
                 ${POSTER_TYPES.map((type) => {
-                  const disabled = type === "review";
-                  return `<label class="check-card${disabled ? " disabled" : ""}"><input type="checkbox" name="posterTypes" value="${type}"${checked(automationSettings.posterTypes.includes(type))}${disabled ? " disabled" : ""}><span><strong>${escapeHtml(typeLabels[type])}</strong><span class="mini">${disabled ? "Requires a screenshot or message" : "Generate daily"}</span></span></label>`;
+                  const disabled = type === "review" || type === "reference";
+                  const disabledReason =
+                    type === "review"
+                      ? "Requires a screenshot or message"
+                      : "Requires a source poster";
+                  return `<label class="check-card${disabled ? " disabled" : ""}"><input type="checkbox" name="posterTypes" value="${type}"${checked(automationSettings.posterTypes.includes(type))}${disabled ? " disabled" : ""}><span><strong>${escapeHtml(typeLabels[type])}</strong><span class="mini">${disabled ? disabledReason : "Generate daily"}</span></span></label>`;
                 }).join("")}
               </div></div>
             </div>
@@ -352,7 +359,7 @@ export function renderDashboard(input: {
         </section>
 
         <section class="card wide reference-panel" id="references">
-          <div class="section-heading"><div><p class="section-kicker">Visual direction</p><h2>${escapeHtml(typeLabels[selectedType])} reference library</h2><p class="help">These images guide layout, typography, spacing, and visual style only for ${escapeHtml(typeLabels[selectedType].toLowerCase())} posters.</p></div><span class="current-type">${referenceImages.length} of 14 saved</span></div>
+          <div class="section-heading"><div><p class="section-kicker">Visual direction</p><h2>${escapeHtml(typeLabels[selectedType])} reference library</h2><p class="help">${selectedType === "reference" ? "Upload the competitor or inspiration poster to remake. It controls layout, fonts, hierarchy, spacing, and visual treatment; the saved brand contributes the logo, identity, and colors." : `These images guide layout, typography, spacing, and visual style only for ${escapeHtml(typeLabels[selectedType].toLowerCase())} posters.`}</p></div><span class="current-type">${referenceImages.length} of 14 saved</span></div>
           ${
             referenceImages.length
               ? `<div class="reference-grid">${referenceImages
@@ -368,9 +375,9 @@ export function renderDashboard(input: {
           }
           <form id="reference-form" method="post" action="/admin/${escapeHtml(brand.businessSlug)}/type-reference" enctype="multipart/form-data">
             <input type="hidden" name="posterType" value="${escapeHtml(selectedType)}">
-            <label for="typeReferenceFiles">Add ${escapeHtml(typeLabels[selectedType].toLowerCase())} reference images</label><input id="typeReferenceFiles" name="typeReferenceFiles" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple>
+            <label for="typeReferenceFiles">${selectedType === "reference" ? "Upload source poster" : `Add ${escapeHtml(typeLabels[selectedType].toLowerCase())} reference images`}</label><input id="typeReferenceFiles" name="typeReferenceFiles" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple>
             <p class="help">Maximum stored references: 14. Gemini 3.1 Flash Image can use up to 14 total inputs; Gemini 3 Pro Image accepts up to 3 style references; Gemini 2.5 Flash Image is limited to one poster style reference in this workflow.</p>
-            <label>Reference notes</label><textarea name="notes">${escapeHtml(typeReference?.notes)}</textarea>
+            <label>${selectedType === "reference" ? "Persistent source-poster guidance" : "Reference notes"}</label><textarea name="notes"${selectedType === "reference" ? ' placeholder="Optional reusable guidance about what to preserve or avoid when using this source poster."' : ""}>${escapeHtml(typeReference?.notes)}</textarea>
             <div class="actions"><button type="submit">Save ${escapeHtml(typeLabels[selectedType])} references</button><a class="button secondary" href="${escapeHtml(publicUrl)}" target="_blank" rel="noopener">View public context</a></div>
           </form>
         </section>
@@ -397,6 +404,11 @@ export function renderDashboard(input: {
                   <label for="reviewMessage">Paste the review message (option 2)</label>
                   <textarea id="reviewMessage" name="reviewMessage" placeholder="Paste the customer's review exactly as received"></textarea>
                   <p class="help">For review posters, provide either a screenshot or the review text. An uploaded screenshot is placed intact as the testimonial; its contents are not extracted or rewritten. If both are supplied, the screenshot takes priority.</p>
+                </div>
+                <div id="referenceMessageField" hidden>
+                  <label for="referenceMessage">What should this poster be about?</label>
+                  <input id="referenceMessage" name="referenceMessage" type="text" maxlength="500" placeholder="Example: Promote painless root canal treatment and ask patients to book a consultation">
+                  <p class="help">Optional. If provided, this message becomes the content source and AI only turns it into concise poster copy. If left blank, AI adapts the main idea from the uploaded source poster to this dental clinic without copying competitor details.</p>
                 </div>
                 <div class="actions">
                   <button type="button" id="generateBrief">1. Prepare content</button>
@@ -520,6 +532,7 @@ export function renderDashboard(input: {
         var form = document.getElementById('lab-form');
         var labPosterType = document.getElementById('labPosterType');
         var reviewScreenshotField = document.getElementById('reviewScreenshotField');
+        var referenceMessageField = document.getElementById('referenceMessageField');
         var briefButton = document.getElementById('generateBrief');
         var imageButton = document.getElementById('generateImage');
         var message = document.getElementById('labMessage');
@@ -546,11 +559,12 @@ export function renderDashboard(input: {
         }
         model.addEventListener('change', syncModelSettings);
         syncModelSettings();
-        function syncReviewUpload() {
+        function syncTypeFields() {
           reviewScreenshotField.hidden = labPosterType.value !== 'review';
+          referenceMessageField.hidden = labPosterType.value !== 'reference';
         }
-        labPosterType.addEventListener('change', syncReviewUpload);
-        syncReviewUpload();
+        labPosterType.addEventListener('change', syncTypeFields);
+        syncTypeFields();
 
         function showMessage(text, isError) {
           message.hidden = false;
@@ -601,7 +615,13 @@ export function renderDashboard(input: {
             promptEditor.value = body.imagePrompt || '';
             briefPreview.value = JSON.stringify(body.dailyBrief || {}, null, 2);
             statusValue.textContent = 'brief_ready';
-            var source = body.contentSource === 'google_sheet' ? 'Google Sheet content found and edited.' : 'AI content generated.';
+            var source = body.contentSource === 'google_sheet'
+              ? 'Google Sheet content found and edited.'
+              : body.contentSource === 'user_message'
+                ? 'Your message was turned into poster copy.'
+                : body.contentSource === 'reference_poster'
+                  ? 'Content was adapted from the source poster.'
+                  : 'AI content generated.';
             var detail = body.contentSourceWarning ? ' ' + body.contentSourceWarning : '';
             showMessage(source + detail + ' You can edit the prompt before rendering the image.', Boolean(body.contentSourceWarning));
           } catch (error) {

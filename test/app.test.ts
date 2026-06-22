@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "../src/index";
 import { normalizeGenerationSettings } from "../src/gemini-models";
 import { automationIsDue, runAutomationHeartbeat } from "../src/automation";
-import { imageGenerationConfig } from "../src/orchestrator";
+import { buildImagePrompt, imageGenerationConfig } from "../src/orchestrator";
 import { defaultPromptSettings } from "../src/prompt-settings";
 import type {
   Bindings,
@@ -414,6 +414,7 @@ describe("daily poster packet worker", () => {
     expect(dashboard).toContain("Awareness poster gallery");
     expect(dashboard).toContain("posterType=offer");
     expect(dashboard).toContain("posterType=review");
+    expect(dashboard).toContain("posterType=reference");
     expect(dashboard).toContain(
       "References, prompts, gallery, and generation stay scoped",
     );
@@ -428,6 +429,18 @@ describe("daily poster packet worker", () => {
     expect(offerDashboard).toContain("Save Offer references");
     expect(offerDashboard).toContain('name="posterType" value="offer"');
     expect(offerDashboard).toContain('class="card wide content-panel" hidden');
+
+    const referenceDashboardResponse = await app.request(
+      `/admin/${brand.businessSlug}?posterType=reference&date=${today}`,
+      { headers: { Cookie: cookie?.split(";")[0] ?? "" } },
+      env,
+    );
+    const referenceDashboard = await referenceDashboardResponse.text();
+    expect(referenceDashboard).toContain("Working on: Reference remake");
+    expect(referenceDashboard).toContain("Upload source poster");
+    expect(referenceDashboard).toContain(
+      "It controls layout, fonts, hierarchy, spacing, and visual treatment",
+    );
   });
 
   it("rejects an invalid dashboard token", async () => {
@@ -1119,6 +1132,181 @@ describe("daily poster packet worker", () => {
       "TODAY'S CONTENT — CHANGE ONLY THESE CONTENT AREAS",
     );
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("lets a source poster override brand layout and typography for reference remakes", () => {
+    const prompt = buildImagePrompt({
+      brand,
+      posterType: "reference",
+      typeReference: {
+        businessSlug: brand.businessSlug,
+        posterType: "reference",
+        productionReferenceImageUrl: "https://example.com/source.png",
+        referenceImageUrls: ["https://example.com/source.png"],
+        notes: "Create a whitening consultation poster.",
+      },
+      date: today,
+      brief: {
+        headline: "A brighter smile starts with a consultation",
+        cta: "Book now",
+      },
+      contextUrl: "https://example.com/context",
+      runId: "reference-test",
+      settings: normalizeGenerationSettings({
+        businessSlug: brand.businessSlug,
+        textModel: "gemini-3.5-flash",
+        imageModel: "gemini-3.1-flash-image",
+        imageResolution: "1K",
+        aspectRatio: "9:16",
+      }),
+      promptSettings: defaultPromptSettings(brand.businessSlug),
+    });
+
+    expect(prompt).toContain("REFERENCE REMAKE MODE");
+    expect(prompt).toContain(
+      "uploaded reference poster is the source of truth",
+    );
+    expect(prompt).toContain(
+      "Ignore its fonts, layout, spacing, image treatment, and composition",
+    );
+    expect(prompt).toContain("POSTER TYPE: REFERENCE REMAKE");
+  });
+
+  it("requires a source poster before preparing a reference remake", async () => {
+    env.GEMINI_API_KEY = "gemini-secret";
+    const response = await app.request(
+      `/api/daily-brief/${brand.businessSlug}/reference/today`,
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer test-secret" },
+      },
+      env,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(
+      "Upload at least one source poster",
+    );
+  });
+
+  it("uses the user's one-line message or falls back to the source poster idea", async () => {
+    env.GEMINI_API_KEY = "gemini-secret";
+    env.ASSETS = {
+      get: vi.fn().mockResolvedValue({
+        arrayBuffer: vi
+          .fn()
+          .mockResolvedValue(new Uint8Array([1, 2, 3]).buffer),
+        writeHttpMetadata: (headers: Headers) =>
+          headers.set("content-type", "image/png"),
+      }),
+    } as unknown as R2Bucket;
+    await store.upsertTypeReference({
+      businessSlug: brand.businessSlug,
+      posterType: "reference",
+      productionReferenceImageUrl: `/assets/businesses/${brand.businessSlug}/types/reference/source.png`,
+      referenceImageUrls: [
+        `/assets/businesses/${brand.businessSlug}/types/reference/source.png`,
+      ],
+      notes: null,
+    });
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        headline: "Comfortable root canal care",
+                        cta: "Book a consultation",
+                      }),
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+
+    const userMessageForm = new FormData();
+    userMessageForm.set("posterType", "reference");
+    userMessageForm.set("date", today);
+    userMessageForm.set(
+      "referenceMessage",
+      "Promote painless root canal treatment and invite consultation bookings.",
+    );
+    const userMessageResponse = await app.request(
+      `/admin/${brand.businessSlug}/generation-lab/brief`,
+      {
+        method: "POST",
+        headers: { Cookie: cookie },
+        body: userMessageForm,
+      },
+      env,
+    );
+    const userMessageBody = (await userMessageResponse.json()) as {
+      contentSource: string;
+      dailyBriefPrompt: string;
+      dailyBrief: Record<string, unknown>;
+    };
+    expect(userMessageResponse.status).toBe(200);
+    expect(userMessageBody.contentSource).toBe("user_message");
+    expect(userMessageBody.dailyBrief.suppliedReferenceMessage).toContain(
+      "painless root canal",
+    );
+    expect(userMessageBody.dailyBriefPrompt).toContain(
+      "USER'S POSTER MESSAGE — PRIMARY CONTENT SOURCE",
+    );
+    expect(userMessageBody.dailyBriefPrompt).toContain(
+      "do not replace it with an AI-chosen topic",
+    );
+
+    const fallbackForm = new FormData();
+    fallbackForm.set("posterType", "reference");
+    fallbackForm.set("date", today);
+    const fallbackResponse = await app.request(
+      `/admin/${brand.businessSlug}/generation-lab/brief`,
+      {
+        method: "POST",
+        headers: { Cookie: cookie },
+        body: fallbackForm,
+      },
+      env,
+    );
+    const fallbackBody = (await fallbackResponse.json()) as {
+      contentSource: string;
+      dailyBriefPrompt: string;
+    };
+    expect(fallbackResponse.status).toBe(200);
+    expect(fallbackBody.contentSource).toBe("reference_poster");
+    expect(fallbackBody.dailyBriefPrompt).toContain(
+      "SOURCE POSTER CONTENT FALLBACK",
+    );
+    const fallbackGeminiBody = JSON.parse(
+      String(fetchMock.mock.calls[1]?.[1]?.body),
+    );
+    expect(fallbackGeminiBody.contents[0].parts[1].inline_data.mime_type).toBe(
+      "image/png",
+    );
   });
 
   it("grounds a review brief in an uploaded customer screenshot", async () => {

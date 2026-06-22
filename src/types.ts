@@ -5,6 +5,7 @@ export const POSTER_TYPES = [
   "anniversary",
   "review",
   "general",
+  "reference",
 ] as const;
 
 export type PosterType = (typeof POSTER_TYPES)[number];

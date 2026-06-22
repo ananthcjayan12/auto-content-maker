@@ -67,6 +67,15 @@ Colors and brand feel → brand board
 Layout and typography → poster-type references
 Words and message → today's content`;
 
+export const REFERENCE_REMAKE_IMAGE_OVERRIDE = `REFERENCE REMAKE MODE — OVERRIDES THE TYPOGRAPHY AND LAYOUT RULES ABOVE
+- The uploaded reference poster is the source of truth for composition, typography style, font character, type scale, hierarchy, alignment, spacing, image placement, masks, borders, accents, and overall visual rhythm.
+- Follow the reference poster's layout and typographic treatment closely. Do not fall back to the saved brand typography, saved brand layout, or the brand board's composition.
+- Use the saved brand system only for the original logo, business identity, contact details, and brand color palette.
+- The brand board may guide colors and identity only. Ignore its fonts, layout, spacing, image treatment, and composition.
+- Replace the source poster's colors with the supplied brand palette while preserving the source poster's contrast relationships and hierarchy.
+- Never copy or retain a competitor logo, business name, contact details, people, product images, claims, offer facts, or exact wording from the source poster.
+- Use TODAY'S CONTENT for all visible message copy. The result should feel like this business's poster built with the uploaded poster's design language.`;
+
 export const DEFAULT_POSTER_TYPE_PROMPTS: Record<PosterType, string> = {
   awareness: `POSTER TYPE: DENTAL AWARENESS
 Purpose: communicate one useful, timely dental-health message. Use an educational but friendly tone. Prioritize one concise headline, one supporting line, and one practical action. Avoid fear-based imagery, graphic dental conditions, diagnosis, guaranteed outcomes, and unsupported medical claims. Determine a relevant Kerala/India angle for the supplied date; if there is no strong event, use a practical dental-awareness topic.`,
@@ -83,6 +92,8 @@ Create one short, warm, original social-proof headline outside the screenshot. U
 When only pasted review text is supplied and no screenshot exists, preserve its meaning and never invent a rating, patient identity, treatment result, or before-and-after claim.`,
   general: `POSTER TYPE: GENERAL CLINIC COMMUNICATION
 Purpose: communicate one supplied clinic update, service message, reminder, or greeting. Use one clear message and one clear CTA. Never invent services, doctor availability, opening hours, credentials, facilities, or announcements. For a general daily post, determine one relevant Kerala/India angle for the supplied date.`,
+  reference: `POSTER TYPE: REFERENCE REMAKE
+Purpose: create a new clinic poster whose layout and typography are led by an uploaded source poster. Use the source poster only as visual direction. Never copy its competitor identity, logo, contact details, claims, offer facts, or exact wording. Create concise content suitable for the supplied date and any instructions in the reference notes. If the notes do not provide a specific message, choose a safe, useful general clinic communication without inventing prices, credentials, availability, outcomes, or medical claims.`,
 };
 
 export function defaultPromptSettings(
