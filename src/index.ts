@@ -629,6 +629,11 @@ app.get("/app/:businessSlug", async (c) => {
   const timezone = c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE;
   const today = todayInTimezone(timezone);
   const month = normalizeMonth(c.req.query("month") || "", today);
+  const calendarPage = Number.parseInt(c.req.query("calendarPage") || "1", 10);
+  const historyPage = Number.parseInt(c.req.query("historyPage") || "1", 10);
+  const historyPosterType = c.req.query("historyPosterType") || "all";
+  const historyStatus = c.req.query("historyStatus") || "all";
+  const editDate = c.req.query("editDate") || undefined;
   const from = today;
   const to = addDays(today, 6);
   const [
@@ -650,7 +655,7 @@ app.get("/app/:businessSlug", async (c) => {
           (await store.getGeneratedPoster(businessSlug, "awareness", today)) ??
           (await store.getGeneratedPoster(businessSlug, "reference", today)),
       ),
-    store.listGeneratedPosters(businessSlug, { limit: 30 }),
+    store.listGeneratedPosters(businessSlug, { limit: 100 }),
     store.listTemplatePatterns(businessSlug),
   ]);
   const automationSettings =
@@ -668,6 +673,11 @@ app.get("/app/:businessSlug", async (c) => {
       recentPosters,
       templatePatterns,
       automationSettings,
+      calendarPage: Number.isFinite(calendarPage) ? calendarPage : 1,
+      historyPage: Number.isFinite(historyPage) ? historyPage : 1,
+      historyPosterType,
+      historyStatus,
+      editDate,
       message: c.req.query("message") || undefined,
       error: c.req.query("error") || undefined,
     }),
