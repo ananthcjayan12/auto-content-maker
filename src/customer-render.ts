@@ -1210,9 +1210,12 @@ export function renderCustomerApp(input: {
         </div>
         <details class="drawer" style="margin-top: 24px; margin-bottom: 24px;">
           <summary><strong>Generate template ideas with AI</strong> <span class="mini">creates visual pattern cards, not final posters</span></summary>
-          <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/templates/generate">
+          <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/templates/generate" enctype="multipart/form-data">
             <label>What kind of templates do you want?</label>
             <textarea name="notes" placeholder="Example: premium clinic style, clean educational posts, festival greetings, bold offers, minimal typography"></textarea>
+            <label>Reference poster image</label>
+            <input name="referenceImage" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+            <p class="mini">Optional. The AI will use broad layout, spacing, hierarchy, and font feel only; your brand colors, logo, and clinic identity stay protected.</p>
             <div class="actions" style="margin-top: 14px;"><button type="submit">Generate template ideas</button></div>
           </form>
         </details>
@@ -1221,7 +1224,13 @@ export function renderCustomerApp(input: {
             ? `<div class="calendar-list">${templatePatterns
                 .map(
                   (pattern) => `<div class="calendar-row">
-                    <div>${pattern.previewImageUrl ? `<img class="thumb" src="${escapeHtml(pattern.previewImageUrl)}" alt="">` : `<span class="pill">${escapeHtml(pattern.isActive ? "active" : "paused")}</span>`}</div>
+                    <div>${
+                      pattern.previewImageUrl
+                        ? `<img class="thumb" src="${escapeHtml(pattern.previewImageUrl)}" alt="">`
+                        : pattern.referenceImageUrls[0]
+                          ? `<img class="thumb" src="${escapeHtml(pattern.referenceImageUrls[0])}" alt="Reference">`
+                          : `<span class="pill">${escapeHtml(pattern.isActive ? "active" : "paused")}</span>`
+                    }</div>
                     <div>
                       <div class="topic">${escapeHtml(pattern.name)}</div>
                       <div class="mini">${escapeHtml(pattern.bestFor)}</div>

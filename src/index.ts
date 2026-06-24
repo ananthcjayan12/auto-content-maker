@@ -38,6 +38,7 @@ import {
   runPosterOrchestrator,
   buildImagePrompt,
 } from "./orchestrator";
+import type { ImageBase64Reference } from "./orchestrator";
 import { D1PosterStore } from "./store";
 import {
   defaultPromptSettings,
@@ -45,6 +46,7 @@ import {
 } from "./prompt-settings";
 import type {
   Bindings,
+  BusinessBrandSystem,
   CalendarEntryStatus,
   CalendarPosterMode,
   ContentCalendarEntry,
@@ -252,6 +254,7 @@ function slugPart(value: string): string {
 function fallbackTemplatePatterns(input: {
   businessSlug: string;
   notes: string;
+  referenceImageUrl?: string | null;
 }): PosterTemplatePattern[] {
   const base = [
     {
@@ -304,41 +307,64 @@ function fallbackTemplatePatterns(input: {
     templateId: `${slugPart(pattern.name)}-${Date.now()}-${index + 1}`,
     ...pattern,
     previewImageUrl: null,
-    referenceImageUrls: [],
+    referenceImageUrls: input.referenceImageUrl ? [input.referenceImageUrl] : [],
     isActive: true,
   }));
 }
 
 async function generateTemplatePatterns(input: {
   env: Bindings;
-  brand: { businessSlug: string; businessName: string };
+  brand: BusinessBrandSystem;
   notes: string;
+  referenceImageUrl?: string | null;
+  referenceImage?: ImageBase64Reference | null;
 }): Promise<PosterTemplatePattern[]> {
   const apiKey = input.env.GEMINI_API_KEY?.trim();
   if (!apiKey) {
     return fallbackTemplatePatterns({
       businessSlug: input.brand.businessSlug,
       notes: input.notes,
+      referenceImageUrl: input.referenceImageUrl,
     });
   }
   const model =
     input.env.GEMINI_TEXT_MODEL && isTextModel(input.env.GEMINI_TEXT_MODEL)
       ? input.env.GEMINI_TEXT_MODEL
       : DEFAULT_GENERATION_SETTINGS.textModel;
+  const referenceInstruction = input.referenceImage
+    ? `A reference poster image is attached. Use it only for broad layout structure, visual hierarchy, spacing rhythm, font feel, image/text placement, and composition patterns. Do not copy its brand name, logo, contact details, exact wording, claims, offers, illustrations, people, products, icons, or distinctive protected artwork.`
+    : `No reference poster image is attached. Create original reusable patterns that fit the business brand.`;
   const prompt = `Create 5 reusable poster template pattern cards for a small business.
 
 Business: ${input.brand.businessName}
+Brand colors: primary ${input.brand.colors.primary}, secondary ${input.brand.colors.secondary}, accent ${input.brand.colors.accent}, dark text ${input.brand.colors.darkText}, muted text ${input.brand.colors.mutedText}
+Brand typography mood: ${input.brand.typography.headingStyle}; ${input.brand.typography.fontMood}
+Brand visual mood: ${input.brand.visualStyle.mood}
 User notes: ${input.notes || "Create a balanced set for education, promotion, festival, and premium brand posts."}
+Reference guidance: ${referenceInstruction}
 
 Return only JSON:
 {"templates":[{"name":"","description":"","bestFor":"","posterType":"general|awareness|offer|festival|anniversary","layoutPrompt":"","stylePrompt":""}]}
 
 Rules:
 - These are reusable visual/layout patterns, not daily content ideas.
-- Do not create prompts that copy competitors or require exact copyrighted layouts.
+- Keep the final template brand-led: clinic logo, brand colors, and contact style must remain from this business.
+- If a reference image is attached, adapt only layout, hierarchy, spacing, and typography feel.
+- Do not create prompts that copy competitors or require exact copyrighted layouts, exact text, logos, people, claims, or contact details from the reference image.
 - Keep language understandable for a non-designer.
 - layoutPrompt should describe composition, hierarchy, spacing, and content placement.
 - stylePrompt should describe mood, typography feel, visual treatment, and what to avoid.`;
+  const parts: Array<
+    { text: string } | { inlineData: { mimeType: string; data: string } }
+  > = [{ text: prompt }];
+  if (input.referenceImage) {
+    parts.push({
+      inlineData: {
+        mimeType: input.referenceImage.contentType,
+        data: input.referenceImage.base64,
+      },
+    });
+  }
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     {
@@ -348,7 +374,7 @@ Rules:
         "x-goog-api-key": apiKey,
       },
       body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        contents: [{ role: "user", parts }],
         generationConfig: { responseMimeType: "application/json" },
       }),
     },
@@ -357,6 +383,7 @@ Rules:
     return fallbackTemplatePatterns({
       businessSlug: input.brand.businessSlug,
       notes: input.notes,
+      referenceImageUrl: input.referenceImageUrl,
     });
   }
   const payload = (await response.json()) as {
@@ -401,7 +428,9 @@ Rules:
             String(template.stylePrompt ?? "").slice(0, 1200) ||
             "Keep the design premium, brand-led, and uncluttered.",
           previewImageUrl: null,
-          referenceImageUrls: [],
+          referenceImageUrls: input.referenceImageUrl
+            ? [input.referenceImageUrl]
+            : [],
           isActive: true,
         } satisfies PosterTemplatePattern;
       });
@@ -410,11 +439,13 @@ Rules:
       : fallbackTemplatePatterns({
           businessSlug: input.brand.businessSlug,
           notes: input.notes,
+          referenceImageUrl: input.referenceImageUrl,
         });
   } catch {
     return fallbackTemplatePatterns({
       businessSlug: input.brand.businessSlug,
       notes: input.notes,
+      referenceImageUrl: input.referenceImageUrl,
     });
   }
 }
@@ -920,13 +951,27 @@ app.post("/app/:businessSlug/templates/generate", async (c) => {
     );
   }
   const form = await c.req.formData();
+  const referenceFile = form.get("referenceImage");
+  let referenceImageUrl: string | null = null;
+  if (isUploadedFile(referenceFile)) {
+    referenceImageUrl = await uploadImage({
+      env: c.env,
+      file: referenceFile,
+      keyPrefix: `businesses/${businessSlug}/templates/reference-${Date.now()}`,
+      publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
+    });
+  }
+  const referenceImage = await imageUrlToBase64({
+    url: referenceImageUrl,
+    env: c.env,
+    publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
+  });
   const patterns = await generateTemplatePatterns({
     env: c.env,
-    brand: {
-      businessSlug: brand.businessSlug,
-      businessName: brand.businessName,
-    },
+    brand,
     notes: formString(form, "notes"),
+    referenceImageUrl,
+    referenceImage,
   });
   await Promise.all(
     patterns.map((pattern) => store.upsertTemplatePattern(pattern)),
