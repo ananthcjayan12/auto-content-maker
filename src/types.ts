@@ -118,6 +118,45 @@ export interface AutomationSettings {
   updatedAt?: string;
 }
 
+export type CalendarPosterMode = "normal" | "exact_message" | "inspiration";
+export type CalendarEntryStatus =
+  | "planned"
+  | "poster_ready"
+  | "needs_message"
+  | "skipped";
+
+export interface ContentCalendarEntry {
+  businessSlug: string;
+  date: string;
+  topic: string;
+  message: string | null;
+  cta: string | null;
+  posterMode: CalendarPosterMode;
+  posterType: PosterType;
+  templateId: string | null;
+  inspirationImageUrl: string | null;
+  notes: string | null;
+  status: CalendarEntryStatus;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PosterTemplatePattern {
+  businessSlug: string;
+  templateId: string;
+  name: string;
+  description: string;
+  bestFor: string;
+  posterType: PosterType | null;
+  layoutPrompt: string;
+  stylePrompt: string;
+  previewImageUrl: string | null;
+  referenceImageUrls: string[];
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export type AutomationRunStatus =
   | "processing"
   | "ready"
@@ -227,6 +266,30 @@ export interface PosterStore {
   upsertAutomationSettings(
     settings: AutomationSettings,
   ): Promise<AutomationSettings>;
+  getCalendarEntry(
+    businessSlug: string,
+    date: string,
+  ): Promise<ContentCalendarEntry | null>;
+  listCalendarEntries(
+    businessSlug: string,
+    options: { month?: string; from?: string; to?: string },
+  ): Promise<ContentCalendarEntry[]>;
+  upsertCalendarEntry(
+    entry: ContentCalendarEntry,
+  ): Promise<ContentCalendarEntry>;
+  deleteCalendarEntry(businessSlug: string, date: string): Promise<void>;
+  getTemplatePattern(
+    businessSlug: string,
+    templateId: string,
+  ): Promise<PosterTemplatePattern | null>;
+  listTemplatePatterns(businessSlug: string): Promise<PosterTemplatePattern[]>;
+  upsertTemplatePattern(
+    pattern: PosterTemplatePattern,
+  ): Promise<PosterTemplatePattern>;
+  deleteTemplatePattern(
+    businessSlug: string,
+    templateId: string,
+  ): Promise<void>;
   claimAutomationRun(
     businessSlug: string,
     posterType: PosterType,

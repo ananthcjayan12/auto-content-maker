@@ -9,12 +9,14 @@ import type {
   AutomationRun,
   AutomationSettings,
   BusinessBrandSystem,
+  ContentCalendarEntry,
   ContentSourceSettings,
   DailyPosterPacket,
   GenerationSettings,
   GeneratedPoster,
   PosterStore,
   PosterPromptSettings,
+  PosterTemplatePattern,
   PosterType,
   PosterTypeReference,
 } from "../src/types";
@@ -33,6 +35,8 @@ class MemoryStore implements PosterStore {
   contentSourceSettings = new Map<string, ContentSourceSettings>();
   automationSettings = new Map<string, AutomationSettings>();
   automationRuns = new Map<string, AutomationRun>();
+  calendarEntries = new Map<string, ContentCalendarEntry>();
+  templatePatterns = new Map<string, PosterTemplatePattern>();
   promptSettings = new Map<string, PosterPromptSettings>();
   generatedPosters = new Map<string, GeneratedPoster>();
 
@@ -101,6 +105,65 @@ class MemoryStore implements PosterStore {
     const saved = { ...settings, updatedAt: new Date().toISOString() };
     this.automationSettings.set(settings.businessSlug, saved);
     return saved;
+  }
+
+  async getCalendarEntry(slug: string, date: string) {
+    return this.calendarEntries.get(`${slug}:${date}`) ?? null;
+  }
+
+  async listCalendarEntries(
+    slug: string,
+    options: { month?: string; from?: string; to?: string },
+  ) {
+    return [...this.calendarEntries.values()]
+      .filter((entry) => {
+        if (entry.businessSlug !== slug) return false;
+        if (options.month) return entry.date.startsWith(options.month);
+        if (options.from && entry.date < options.from) return false;
+        if (options.to && entry.date > options.to) return false;
+        return true;
+      })
+      .sort((left, right) => left.date.localeCompare(right.date));
+  }
+
+  async upsertCalendarEntry(entry: ContentCalendarEntry) {
+    const saved = { ...entry, updatedAt: new Date().toISOString() };
+    this.calendarEntries.set(`${entry.businessSlug}:${entry.date}`, saved);
+    return saved;
+  }
+
+  async deleteCalendarEntry(slug: string, date: string) {
+    this.calendarEntries.delete(`${slug}:${date}`);
+  }
+
+  private templatePatternKey(slug: string, templateId: string) {
+    return `${slug}:${templateId}`;
+  }
+
+  async getTemplatePattern(slug: string, templateId: string) {
+    return (
+      this.templatePatterns.get(this.templatePatternKey(slug, templateId)) ??
+      null
+    );
+  }
+
+  async listTemplatePatterns(slug: string) {
+    return [...this.templatePatterns.values()]
+      .filter((pattern) => pattern.businessSlug === slug)
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async upsertTemplatePattern(pattern: PosterTemplatePattern) {
+    const saved = { ...pattern, updatedAt: new Date().toISOString() };
+    this.templatePatterns.set(
+      this.templatePatternKey(pattern.businessSlug, pattern.templateId),
+      saved,
+    );
+    return saved;
+  }
+
+  async deleteTemplatePattern(slug: string, templateId: string) {
+    this.templatePatterns.delete(this.templatePatternKey(slug, templateId));
   }
 
   async claimAutomationRun(slug: string, type: PosterType, date: string) {
