@@ -3,6 +3,13 @@ import { DEFAULT_TIMEZONE, resolveDate, todayInTimezone } from "./date";
 import { renderDashboard, renderLoginPage } from "./admin-render";
 import { renderCustomerApp } from "./customer-render";
 import {
+  renderOnboardingActivate,
+  renderOnboardingBrand,
+  renderOnboardingPlan,
+  renderOnboardingSample,
+  renderOnboardingStart,
+} from "./onboarding-render";
+import {
   clearAdminSession,
   getAdminBusinessSlug,
   setAdminSession,
@@ -251,6 +258,133 @@ function slugPart(value: string): string {
   );
 }
 
+function businessSlugFromName(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 42) || "new-business"
+  );
+}
+
+function normalizeContactUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("@")) {
+    return `https://instagram.com/${trimmed.slice(1).replace(/^\/+/, "")}`;
+  }
+  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith("/")) {
+    return trimmed;
+  }
+  if (/^[a-z0-9.-]+\.[a-z]{2,}(?:\/.*)?$/i.test(trimmed)) {
+    return `https://${trimmed}`;
+  }
+  return null;
+}
+
+function categoryFromBrand(brand: BusinessBrandSystem): string {
+  const rule = brand.defaultPosterRules.find((item) =>
+    item.startsWith("Create content suitable for "),
+  );
+  return (
+    rule?.replace(/^Create content suitable for /, "").replace(/\.$/, "") ?? ""
+  );
+}
+
+function categoryRules(input: {
+  existingRules: string[];
+  category: string;
+  country: string;
+  timezone: string;
+}): string[] {
+  const preserved = input.existingRules.filter(
+    (rule) =>
+      !rule.startsWith("Create content suitable for ") &&
+      !rule.startsWith("Assume country/timezone context: "),
+  );
+  return [
+    ...preserved,
+    `Create content suitable for ${input.category}.`,
+    `Assume country/timezone context: ${input.country}, ${input.timezone}.`,
+  ];
+}
+
+async function uniqueBusinessSlug(
+  store: PosterStore,
+  businessName: string,
+): Promise<string> {
+  const base = businessSlugFromName(businessName);
+  for (let index = 0; index < 100; index += 1) {
+    const candidate = index === 0 ? base : `${base}-${index + 1}`;
+    if (!(await store.getBrand(candidate))) return candidate;
+  }
+  return `${base}-${Date.now()}`;
+}
+
+function starterBrand(input: {
+  businessSlug: string;
+  businessName: string;
+  phone: string;
+  websiteUrl: string | null;
+  category: string;
+  country: string;
+  timezone: string;
+  publicBaseUrl: string;
+}): BusinessBrandSystem {
+  return {
+    businessSlug: input.businessSlug,
+    businessName: input.businessName,
+    phone: input.phone,
+    websiteUrl: input.websiteUrl,
+    logoUrl: "/onboarding-assets/placeholder-logo.svg",
+    brandReferenceBoardUrl: "/onboarding-assets/placeholder-board.svg",
+    colors: {
+      primary: "#0284c7",
+      secondary: "#f9fafb",
+      accent: "#ffffff",
+      darkText: "#111827",
+      mutedText: "#4b5563",
+    },
+    typography: {
+      headingStyle: "clean bold sans-serif with strong mobile readability",
+      bodyStyle: "simple readable sans-serif",
+      fontMood: "modern, trustworthy, clear, and friendly",
+    },
+    visualStyle: {
+      mood: `clean, useful, and conversion-focused for a ${input.category.toLowerCase()} in ${input.country}`,
+      layout:
+        "mobile-first poster layouts with a strong headline, simple message, clear CTA, and visible business identity",
+      photoStyle:
+        "bright, natural, brand-safe imagery or clean graphic backgrounds when photography is not available",
+      avoid: [
+        "crowded flyer look",
+        "tiny unreadable text",
+        "fake urgency",
+        "invented claims, prices, awards, or guarantees",
+      ],
+    },
+    defaultPosterRules: [
+      "Keep every poster readable on mobile.",
+      "Use the business name, logo, phone, and brand color consistently.",
+      "Do not invent factual offers, prices, dates, awards, or claims.",
+      `Create content suitable for ${input.category}.`,
+      `Assume country/timezone context: ${input.country}, ${input.timezone}.`,
+    ],
+  };
+}
+
+function onboardingRedirect(
+  c: Context<{ Bindings: Bindings }>,
+  businessSlug: string,
+  step: "business" | "brand" | "sample" | "plan" | "activate",
+  params: Record<string, string> = {},
+) {
+  const search = new URLSearchParams(params);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return c.redirect(`/onboarding/${businessSlug}/${step}${suffix}`, 303);
+}
+
 function fallbackTemplatePatterns(input: {
   businessSlug: string;
   notes: string;
@@ -312,6 +446,206 @@ function fallbackTemplatePatterns(input: {
       : [],
     isActive: true,
   }));
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function cleanHex(value: unknown, fallback: string): string {
+  const text = String(value ?? "").trim();
+  return /^#[0-9A-Fa-f]{6}$/.test(text) ? text : fallback;
+}
+
+async function suggestColorsFromLogo(input: {
+  env: Bindings;
+  brand: BusinessBrandSystem;
+  logoImage: ImageBase64Reference | null;
+}): Promise<BusinessBrandSystem["colors"]> {
+  const fallback = {
+    primary: input.brand.colors.primary,
+    secondary:
+      input.brand.colors.secondary === "#f9fafb"
+        ? "#e0f2fe"
+        : input.brand.colors.secondary,
+    accent: input.brand.colors.accent,
+    darkText: input.brand.colors.darkText,
+    mutedText: input.brand.colors.mutedText,
+  };
+  const apiKey = input.env.GEMINI_API_KEY?.trim();
+  if (!apiKey || !input.logoImage) return fallback;
+  const model =
+    input.env.GEMINI_TEXT_MODEL && isTextModel(input.env.GEMINI_TEXT_MODEL)
+      ? input.env.GEMINI_TEXT_MODEL
+      : "gemini-2.5-flash";
+  const prompt = `Suggest a clean social-poster brand palette from this logo.
+
+Business: ${input.brand.businessName}
+Current palette: ${JSON.stringify(input.brand.colors)}
+
+Return only JSON:
+{"primary":"#000000","secondary":"#000000","accent":"#000000","darkText":"#000000","mutedText":"#000000"}
+
+Rules:
+- primary should be the strongest recognizable brand color.
+- secondary should be a soft supporting background color.
+- accent should work for CTA/buttons/highlights.
+- darkText must be readable on light backgrounds.
+- mutedText must be readable for secondary copy.
+- Use only six-digit hex colors.`;
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  mimeType: input.logoImage.contentType,
+                  data: input.logoImage.base64,
+                },
+              },
+            ],
+          },
+        ],
+        generationConfig: { responseMimeType: "application/json" },
+      }),
+    },
+  );
+  if (!response.ok) return fallback;
+  const payload = (await response.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  const text =
+    payload.candidates
+      ?.flatMap((candidate) => candidate.content?.parts ?? [])
+      .map((part) => part.text ?? "")
+      .join("\n")
+      .trim() ?? "";
+  const parsed = parseJsonObject(text);
+  if (!parsed) return fallback;
+  return {
+    primary: cleanHex(parsed.primary, fallback.primary),
+    secondary: cleanHex(parsed.secondary, fallback.secondary),
+    accent: cleanHex(parsed.accent, fallback.accent),
+    darkText: cleanHex(parsed.darkText, fallback.darkText),
+    mutedText: cleanHex(parsed.mutedText, fallback.mutedText),
+  };
+}
+
+function fallbackSampleContent(input: {
+  brand: BusinessBrandSystem;
+  style: string;
+  notes: string;
+}): Pick<ContentCalendarEntry, "topic" | "message" | "cta" | "posterType"> {
+  const category = categoryFromBrand(input.brand).toLowerCase();
+  const note = input.notes ? ` Focus: ${input.notes}.` : "";
+  if (category.includes("software")) {
+    return {
+      topic: "Show how your software service saves time",
+      message: `Turn one repetitive business task into a smoother workflow with the right software partner.${note}`,
+      cta: "Book a discovery call",
+      posterType: input.style === "promotional" ? "offer" : "general",
+    };
+  }
+  if (category.includes("design")) {
+    return {
+      topic: "Design that makes the brand easier to trust",
+      message: `Good design helps customers understand your offer faster and remember your brand longer.${note}`,
+      cta: "Start a design project",
+      posterType: input.style === "promotional" ? "offer" : "general",
+    };
+  }
+  return {
+    topic: "Helpful tip for customers",
+    message: `A simple, useful post that introduces ${input.brand.businessName} and gives customers one clear reason to get in touch today.${note}`,
+    cta: "Contact us today",
+    posterType: input.style === "promotional" ? "offer" : "general",
+  };
+}
+
+async function generateSampleContent(input: {
+  env: Bindings;
+  brand: BusinessBrandSystem;
+  style: string;
+  notes: string;
+}): Promise<
+  Pick<ContentCalendarEntry, "topic" | "message" | "cta" | "posterType">
+> {
+  const fallback = fallbackSampleContent(input);
+  const apiKey = input.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) return fallback;
+  const model =
+    input.env.GEMINI_TEXT_MODEL && isTextModel(input.env.GEMINI_TEXT_MODEL)
+      ? input.env.GEMINI_TEXT_MODEL
+      : "gemini-2.5-flash";
+  const prompt = `Create one sample social poster content idea for this business.
+
+Business: ${input.brand.businessName}
+Category: ${categoryFromBrand(input.brand) || "Small business"}
+Website/contact: ${input.brand.websiteUrl ?? ""} ${input.brand.phone}
+Style: ${input.style}
+Focus note: ${input.notes || "None"}
+
+Return only JSON:
+{"topic":"","message":"","cta":"","posterType":"general|awareness|offer|festival|anniversary"}
+
+Rules:
+- Make it specific to the business category.
+- Keep message short enough for a poster.
+- Do not invent prices, discounts, awards, dates, customer counts, legal claims, medical claims, or guaranteed outcomes.
+- Use offer only if the focus note clearly asks for a promotion.`;
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: "application/json" },
+      }),
+    },
+  );
+  if (!response.ok) return fallback;
+  const payload = (await response.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  const text =
+    payload.candidates
+      ?.flatMap((candidate) => candidate.content?.parts ?? [])
+      .map((part) => part.text ?? "")
+      .join("\n")
+      .trim() ?? "";
+  const parsed = parseJsonObject(text);
+  if (!parsed) return fallback;
+  const posterType = String(parsed.posterType ?? fallback.posterType);
+  return {
+    topic: String(parsed.topic ?? fallback.topic).slice(0, 140),
+    message: String(parsed.message ?? fallback.message).slice(0, 500),
+    cta: String(parsed.cta ?? fallback.cta).slice(0, 120),
+    posterType:
+      isPosterType(posterType) && posterType !== "review"
+        ? posterType
+        : fallback.posterType,
+  };
 }
 
 async function generateTemplatePatterns(input: {
@@ -646,6 +980,697 @@ app.post("/admin/login", async (c) => {
 app.post("/admin/logout", async (c) => {
   clearAdminSession(c);
   return c.redirect("/", 303);
+});
+
+app.get("/onboarding-assets/placeholder-logo.svg", (c) =>
+  c.body(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="120" fill="#e0f2fe"/><circle cx="256" cy="210" r="74" fill="#0284c7"/><path d="M130 392c22-70 72-106 126-106s104 36 126 106" fill="#0284c7"/></svg>`,
+    200,
+    { "Content-Type": "image/svg+xml; charset=utf-8" },
+  ),
+);
+
+app.get("/onboarding-assets/placeholder-board.svg", (c) =>
+  c.body(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="520" viewBox="0 0 900 520"><rect width="900" height="520" rx="36" fill="#f9fafb"/><rect x="64" y="64" width="330" height="390" rx="24" fill="#ffffff" stroke="#e5e7eb"/><rect x="448" y="64" width="388" height="104" rx="20" fill="#e0f2fe"/><rect x="448" y="208" width="184" height="246" rx="20" fill="#111827"/><rect x="652" y="208" width="184" height="246" rx="20" fill="#0284c7"/><circle cx="229" cy="190" r="58" fill="#0284c7"/><rect x="124" y="300" width="210" height="22" rx="11" fill="#111827"/><rect x="124" y="342" width="150" height="18" rx="9" fill="#4b5563"/></svg>`,
+    200,
+    { "Content-Type": "image/svg+xml; charset=utf-8" },
+  ),
+);
+
+app.get("/onboarding/new", async (c) => {
+  return c.html(
+    renderOnboardingStart({
+      timezone: c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE,
+      message: c.req.query("message") || undefined,
+      error: c.req.query("error") || undefined,
+    }),
+  );
+});
+
+app.post("/onboarding/business", async (c) => {
+  const form = await c.req.formData();
+  const token = formString(form, "token");
+  const expected = c.env.POSTER_ADMIN_TOKEN;
+  if (!expected || !tokensMatch(token, expected)) {
+    return c.redirect(
+      "/onboarding/new?error=Enter+a+valid+admin+token+to+create+a+customer",
+      303,
+    );
+  }
+  const businessName = formString(form, "businessName");
+  const category = formString(form, "category");
+  const phone = formString(form, "phone");
+  const country = formString(form, "country") || "India";
+  const timezone = formString(form, "timezone") || DEFAULT_TIMEZONE;
+  if (!businessName || !category || !phone) {
+    return c.redirect(
+      "/onboarding/new?error=Business+name,+category,+and+phone+are+required",
+      303,
+    );
+  }
+  const rawWebsiteUrl = formString(form, "websiteUrl");
+  const websiteUrl = normalizeContactUrl(rawWebsiteUrl);
+  if (rawWebsiteUrl && !websiteUrl) {
+    return c.redirect(
+      "/onboarding/new?error=Enter+a+valid+website+URL+or+Instagram+handle",
+      303,
+    );
+  }
+  const store = storeFor(c.env);
+  const businessSlug = await uniqueBusinessSlug(store, businessName);
+  const brand = starterBrand({
+    businessSlug,
+    businessName,
+    phone,
+    websiteUrl,
+    category,
+    country,
+    timezone,
+    publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
+  });
+  const validated = validateBrand(brand, businessSlug);
+  if (!validated.value) {
+    return c.redirect(
+      `/onboarding/new?error=${encodeURIComponent(validated.errors.join(" "))}`,
+      303,
+    );
+  }
+  await store.upsertBrand(validated.value);
+  await store.upsertGenerationSettings(
+    defaultGenerationSettings(businessSlug, c.env),
+  );
+  await store.upsertContentSourceSettings(
+    defaultContentSourceSettings(businessSlug),
+  );
+  await store.upsertPromptSettings(defaultPromptSettings(businessSlug));
+  await store.upsertAutomationSettings({
+    ...defaultAutomationSettings(businessSlug),
+    enabled: false,
+    posterTypes: ["general"],
+  });
+  await setAdminSession(c, businessSlug);
+  return onboardingRedirect(c, businessSlug, "brand", {
+    message: "Customer workspace created. Add brand details next.",
+  });
+});
+
+app.get("/onboarding/:businessSlug/business", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.redirect("/?error=Please+sign+in+to+continue+onboarding", 303);
+  }
+  const brand = await storeFor(c.env).getBrand(businessSlug);
+  if (!brand)
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  return c.html(
+    renderOnboardingStart({
+      brand,
+      category: categoryFromBrand(brand),
+      timezone: c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE,
+      message: c.req.query("message") || undefined,
+      error: c.req.query("error") || undefined,
+    }),
+  );
+});
+
+app.post("/onboarding/:businessSlug/business", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  const existing = await store.getBrand(businessSlug);
+  if (!existing)
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  const form = await c.req.formData();
+  const businessName = formString(form, "businessName");
+  const category = formString(form, "category");
+  const phone = formString(form, "phone");
+  const country = formString(form, "country") || "India";
+  const timezone = formString(form, "timezone") || DEFAULT_TIMEZONE;
+  const rawWebsiteUrl = formString(form, "websiteUrl");
+  const websiteUrl = normalizeContactUrl(rawWebsiteUrl);
+  if (!businessName || !category || !phone) {
+    return onboardingRedirect(c, businessSlug, "business", {
+      error: "Business name, category, and phone are required.",
+    });
+  }
+  if (rawWebsiteUrl && !websiteUrl) {
+    return onboardingRedirect(c, businessSlug, "business", {
+      error: "Enter a valid website URL or Instagram handle.",
+    });
+  }
+  const validated = validateBrand(
+    {
+      ...existing,
+      businessName,
+      phone,
+      websiteUrl,
+      visualStyle: {
+        ...existing.visualStyle,
+        mood: `clean, useful, and conversion-focused for a ${category.toLowerCase()} in ${country}`,
+      },
+      defaultPosterRules: categoryRules({
+        existingRules: existing.defaultPosterRules,
+        category,
+        country,
+        timezone,
+      }),
+    },
+    businessSlug,
+    existing,
+  );
+  if (!validated.value) {
+    return onboardingRedirect(c, businessSlug, "business", {
+      error: validated.errors.join(" "),
+    });
+  }
+  await store.upsertBrand(validated.value);
+  return onboardingRedirect(c, businessSlug, "brand", {
+    message: "Business details updated.",
+  });
+});
+
+app.get("/onboarding/:businessSlug/brand", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.redirect("/?error=Please+sign+in+to+continue+onboarding", 303);
+  }
+  const brand = await storeFor(c.env).getBrand(businessSlug);
+  if (!brand)
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  return c.html(
+    renderOnboardingBrand({
+      brand,
+      message: c.req.query("message") || undefined,
+      error: c.req.query("error") || undefined,
+    }),
+  );
+});
+
+app.post("/onboarding/:businessSlug/brand", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  const existing = await store.getBrand(businessSlug);
+  if (!existing)
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  try {
+    const form = await c.req.formData();
+    const logoFile = form.get("logoFile");
+    const boardFile = form.get("boardFile");
+    const primary = formString(form, "primary") || existing.colors.primary;
+    const secondary =
+      formString(form, "secondary") || existing.colors.secondary;
+    const accent = formString(form, "accent") || existing.colors.accent;
+    const darkText = formString(form, "darkText") || existing.colors.darkText;
+    const mutedText =
+      formString(form, "mutedText") || existing.colors.mutedText;
+    const style = formString(form, "style") || "premium";
+    const notes = formString(form, "notes");
+    const brandInput = {
+      ...existing,
+      logoUrl: existing.logoUrl,
+      brandReferenceBoardUrl: existing.brandReferenceBoardUrl,
+      colors: {
+        primary,
+        secondary,
+        accent,
+        darkText,
+        mutedText,
+      },
+      typography: {
+        headingStyle:
+          style === "bold"
+            ? "bold high-contrast sans-serif built for short promotional posters"
+            : style === "minimal"
+              ? "minimal premium sans-serif with confident spacing"
+              : "clean bold sans-serif with strong mobile readability",
+        bodyStyle: "simple readable sans-serif",
+        fontMood: `${style}, modern, clear, and brand-safe`,
+      },
+      visualStyle: {
+        ...existing.visualStyle,
+        mood: `${style}, trustworthy, conversion-focused, and easy to scan`,
+        layout:
+          "simple mobile poster layouts with one strong headline, concise supporting text, clear CTA, and visible business identity",
+        avoid: [
+          ...new Set([
+            ...existing.visualStyle.avoid,
+            ...formLines(form, "notes"),
+            ...(notes ? [notes] : []),
+          ]),
+        ],
+      },
+    };
+    const publicBase = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
+    if (isUploadedFile(logoFile)) {
+      brandInput.logoUrl = await uploadImage({
+        env: c.env,
+        file: logoFile,
+        keyPrefix: `businesses/${businessSlug}/brand/logo-${Date.now()}`,
+        publicBaseUrl: publicBase,
+      });
+    }
+    if (isUploadedFile(boardFile)) {
+      brandInput.brandReferenceBoardUrl = await uploadImage({
+        env: c.env,
+        file: boardFile,
+        keyPrefix: `businesses/${businessSlug}/brand/reference-board-${Date.now()}`,
+        publicBaseUrl: publicBase,
+      });
+    }
+    const validated = validateBrand(brandInput, businessSlug, existing);
+    if (!validated.value) {
+      return onboardingRedirect(c, businessSlug, "brand", {
+        error: validated.errors.join(" "),
+      });
+    }
+    await store.upsertBrand(validated.value);
+    const patterns = fallbackTemplatePatterns({
+      businessSlug,
+      notes,
+      referenceImageUrl: validated.value.brandReferenceBoardUrl.startsWith(
+        "/onboarding-assets/",
+      )
+        ? null
+        : validated.value.brandReferenceBoardUrl,
+    });
+    await Promise.all(
+      patterns.map((pattern) => store.upsertTemplatePattern(pattern)),
+    );
+    return onboardingRedirect(c, businessSlug, "sample", {
+      message: "Brand style saved. Create the first sample now.",
+    });
+  } catch (error) {
+    return onboardingRedirect(c, businessSlug, "brand", {
+      error: error instanceof Error ? error.message : "Brand setup failed.",
+    });
+  }
+});
+
+app.post("/onboarding/:businessSlug/brand/suggest-colors", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  const existing = await store.getBrand(businessSlug);
+  if (!existing)
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  try {
+    const form = await c.req.formData();
+    const logoFile = form.get("logoFile");
+    const boardFile = form.get("boardFile");
+    const publicBase = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
+    let logoUrl = existing.logoUrl;
+    let boardUrl = existing.brandReferenceBoardUrl;
+    if (isUploadedFile(logoFile)) {
+      logoUrl = await uploadImage({
+        env: c.env,
+        file: logoFile,
+        keyPrefix: `businesses/${businessSlug}/brand/logo-${Date.now()}`,
+        publicBaseUrl: publicBase,
+      });
+    }
+    if (isUploadedFile(boardFile)) {
+      boardUrl = await uploadImage({
+        env: c.env,
+        file: boardFile,
+        keyPrefix: `businesses/${businessSlug}/brand/reference-board-${Date.now()}`,
+        publicBaseUrl: publicBase,
+      });
+    }
+    const logoImage = await imageUrlToBase64({
+      url: logoUrl,
+      env: c.env,
+      publicBaseUrl: publicBase,
+    });
+    const colors = await suggestColorsFromLogo({
+      env: c.env,
+      brand: { ...existing, logoUrl, brandReferenceBoardUrl: boardUrl },
+      logoImage,
+    });
+    const style = formString(form, "style") || "premium";
+    const notes = formString(form, "notes");
+    const validated = validateBrand(
+      {
+        ...existing,
+        logoUrl,
+        brandReferenceBoardUrl: boardUrl,
+        colors,
+        typography: {
+          headingStyle:
+            style === "bold"
+              ? "bold high-contrast sans-serif built for short promotional posters"
+              : style === "minimal"
+                ? "minimal premium sans-serif with confident spacing"
+                : "clean bold sans-serif with strong mobile readability",
+          bodyStyle: "simple readable sans-serif",
+          fontMood: `${style}, modern, clear, and brand-safe`,
+        },
+        visualStyle: {
+          ...existing.visualStyle,
+          mood: `${style}, trustworthy, conversion-focused, and easy to scan`,
+          avoid: [
+            ...new Set([
+              ...existing.visualStyle.avoid,
+              ...formLines(form, "notes"),
+              ...(notes ? [notes] : []),
+            ]),
+          ],
+        },
+      },
+      businessSlug,
+      existing,
+    );
+    if (!validated.value) {
+      return onboardingRedirect(c, businessSlug, "brand", {
+        error: validated.errors.join(" "),
+      });
+    }
+    await store.upsertBrand(validated.value);
+    return onboardingRedirect(c, businessSlug, "brand", {
+      message: logoImage
+        ? "Colors suggested from the logo. Review and adjust if needed."
+        : "Logo saved. Add a PNG, JPG, or WebP logo for stronger color suggestions.",
+    });
+  } catch (error) {
+    return onboardingRedirect(c, businessSlug, "brand", {
+      error:
+        error instanceof Error ? error.message : "Color suggestion failed.",
+    });
+  }
+});
+
+app.get("/onboarding/:businessSlug/sample", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.redirect("/?error=Please+sign+in+to+continue+onboarding", 303);
+  }
+  const store = storeFor(c.env);
+  const brand = await store.getBrand(businessSlug);
+  if (!brand)
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  const today = todayInTimezone(c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE);
+  const entry = await store.getCalendarEntry(businessSlug, today);
+  const poster = await store.getGeneratedPoster(
+    businessSlug,
+    entry?.posterType ?? "general",
+    today,
+  );
+  return c.html(
+    renderOnboardingSample({
+      brand,
+      today,
+      entry,
+      poster,
+      message: c.req.query("message") || undefined,
+      error: c.req.query("error") || undefined,
+    }),
+  );
+});
+
+app.post("/onboarding/:businessSlug/sample-content", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  const brand = await store.getBrand(businessSlug);
+  if (!brand)
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  const form = await c.req.formData();
+  const resolvedDate =
+    resolveDate(
+      formString(form, "date"),
+      c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE,
+    ) ?? todayInTimezone(c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE);
+  const content = await generateSampleContent({
+    env: c.env,
+    brand,
+    style: formString(form, "contentStyle") || "mixed",
+    notes: formString(form, "contentNotes"),
+  });
+  await store.upsertCalendarEntry({
+    businessSlug,
+    date: resolvedDate,
+    topic: content.topic,
+    message: content.message,
+    cta: content.cta,
+    posterMode: "normal",
+    posterType: content.posterType,
+    templateId: null,
+    inspirationImageUrl: null,
+    notes: formString(form, "contentNotes") || null,
+    status: "planned",
+  });
+  return onboardingRedirect(c, businessSlug, "sample", {
+    message: "Sample content created. Review it, then generate the poster.",
+  });
+});
+
+app.post("/onboarding/:businessSlug/sample", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  const form = await c.req.formData();
+  const resolvedDate =
+    resolveDate(
+      formString(form, "date"),
+      c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE,
+    ) ?? todayInTimezone(c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE);
+  const topic = formString(form, "topic") || "Helpful tip for customers";
+  const existingEntry = await store.getCalendarEntry(
+    businessSlug,
+    resolvedDate,
+  );
+  const entry = await store.upsertCalendarEntry({
+    businessSlug,
+    date: resolvedDate,
+    topic,
+    message: formString(form, "message") || null,
+    cta: existingEntry?.cta ?? "Contact us today",
+    posterMode: "normal",
+    posterType: existingEntry?.posterType ?? "general",
+    templateId: existingEntry?.templateId ?? null,
+    inspirationImageUrl: null,
+    notes: "Onboarding sample poster. Keep it clean, useful, and brand-led.",
+    status: "planned",
+  });
+  try {
+    const poster = await runPosterOrchestrator({
+      env: c.env,
+      store,
+      businessSlug,
+      posterType: "general",
+      dateOrToday: resolvedDate,
+      requestUrl: c.req.url,
+      force: true,
+      calendarEntry: entry,
+    });
+    if (poster.status === "ready") {
+      await store.upsertCalendarEntry({ ...entry, status: "poster_ready" });
+    }
+    return onboardingRedirect(c, businessSlug, "sample", {
+      message:
+        poster.status === "ready"
+          ? "Sample poster generated. Use this style daily when you are ready."
+          : poster.failureReason || "Sample poster needs review.",
+    });
+  } catch (error) {
+    return onboardingRedirect(c, businessSlug, "sample", {
+      error:
+        error instanceof Error
+          ? error.message
+          : "Sample poster generation failed.",
+    });
+  }
+});
+
+app.get("/onboarding/:businessSlug/plan", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.redirect("/?error=Please+sign+in+to+continue+onboarding", 303);
+  }
+  const store = storeFor(c.env);
+  const brand = await store.getBrand(businessSlug);
+  if (!brand)
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  const today = todayInTimezone(c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE);
+  const month = normalizeMonth(c.req.query("month") || "", today);
+  const entries = await store.listCalendarEntries(businessSlug, { month });
+  return c.html(
+    renderOnboardingPlan({
+      brand,
+      month,
+      entries,
+      message: c.req.query("message") || undefined,
+      error: c.req.query("error") || undefined,
+    }),
+  );
+});
+
+app.post("/onboarding/:businessSlug/plan", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  const brand = await store.getBrand(businessSlug);
+  if (!brand)
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  const today = todayInTimezone(c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE);
+  const form = await c.req.formData();
+  const month = normalizeMonth(formString(form, "month"), today);
+  const entries = await generateCalendarEntries({
+    env: c.env,
+    brandName: brand.businessName,
+    businessSlug,
+    month,
+    frequency: formString(form, "frequency") || "daily",
+    style: formString(form, "style") || "mixed",
+    notes: formString(form, "notes"),
+  });
+  await Promise.all(entries.map((entry) => store.upsertCalendarEntry(entry)));
+  return onboardingRedirect(c, businessSlug, "plan", {
+    month,
+    message: `${entries.length} calendar ideas generated. Review and approve when ready.`,
+  });
+});
+
+app.get("/onboarding/:businessSlug/activate", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.redirect("/?error=Please+sign+in+to+continue+onboarding", 303);
+  }
+  const store = storeFor(c.env);
+  const brand = await store.getBrand(businessSlug);
+  if (!brand)
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  const automationSettings =
+    (await store.getAutomationSettings(businessSlug)) ??
+    defaultAutomationSettings(businessSlug);
+  return c.html(
+    renderOnboardingActivate({
+      brand,
+      automationSettings,
+      emailProviderConfigured: Boolean(
+        c.env.RESEND_API_KEY?.trim() && c.env.POSTER_FROM_EMAIL?.trim(),
+      ),
+      geminiConfigured: Boolean(c.env.GEMINI_API_KEY?.trim()),
+      message: c.req.query("message") || undefined,
+      error: c.req.query("error") || undefined,
+    }),
+  );
+});
+
+app.post("/onboarding/:businessSlug/activate", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const form = await c.req.formData();
+  const localTime = formString(form, "localTime");
+  const emailEnabled = form.has("emailEnabled");
+  const recipientEmails = formString(form, "recipientEmails")
+    .split(/[\s,;]+/)
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  if (!isValidLocalTime(localTime)) {
+    return onboardingRedirect(c, businessSlug, "activate", {
+      error: "Choose a valid daily generation time.",
+    });
+  }
+  if (
+    recipientEmails.some((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+  ) {
+    return onboardingRedirect(c, businessSlug, "activate", {
+      error: "Enter valid recipient email addresses.",
+    });
+  }
+  if (emailEnabled && recipientEmails.length === 0) {
+    return onboardingRedirect(c, businessSlug, "activate", {
+      error: "Add at least one delivery email before enabling email.",
+    });
+  }
+  if (
+    emailEnabled &&
+    (!c.env.RESEND_API_KEY?.trim() || !c.env.POSTER_FROM_EMAIL?.trim())
+  ) {
+    return onboardingRedirect(c, businessSlug, "activate", {
+      error: "Email delivery is not configured yet. Add Resend settings first.",
+    });
+  }
+  await storeFor(c.env).upsertAutomationSettings({
+    businessSlug,
+    enabled: form.has("enabled"),
+    localTime,
+    posterTypes: ["general"],
+    forceGeneration: false,
+    emailEnabled,
+    recipientEmails,
+  });
+  return c.redirect(
+    `/app/${businessSlug}?message=${encodeURIComponent("Your daily poster system is active.")}`,
+    303,
+  );
 });
 
 app.get("/app/:businessSlug", async (c) => {

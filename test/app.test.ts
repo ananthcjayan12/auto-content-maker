@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "../src/index";
 import { normalizeGenerationSettings } from "../src/gemini-models";
 import { automationIsDue, runAutomationHeartbeat } from "../src/automation";
-import { buildImagePrompt, imageGenerationConfig } from "../src/orchestrator";
+import {
+  buildImagePrompt,
+  imageGenerationConfig,
+  imageUrlToBase64,
+} from "../src/orchestrator";
 import { defaultPromptSettings } from "../src/prompt-settings";
 import type {
   Bindings,
@@ -523,6 +527,169 @@ describe("daily poster packet worker", () => {
     expect(await response.text()).toContain("Invalid business or admin token");
   });
 
+  it("onboards a new customer through brand, plan, and activation steps", async () => {
+    const createResponse = await app.request(
+      "/onboarding/business",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessName: "Glow Studio",
+          category: "Software service",
+          phone: "+91 99999 88888",
+          websiteUrl: "@glowstudio",
+          country: "India",
+          timezone: "Asia/Kolkata",
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+
+    expect(createResponse.status).toBe(303);
+    expect(createResponse.headers.get("location")).toContain(
+      "/onboarding/glow-studio/brand",
+    );
+    const cookie =
+      createResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const created = await store.getBrand("glow-studio");
+    expect(created).toMatchObject({
+      businessName: "Glow Studio",
+      phone: "+91 99999 88888",
+      websiteUrl: "https://instagram.com/glowstudio",
+    });
+    expect(created?.defaultPosterRules).toContain(
+      "Create content suitable for Software service.",
+    );
+
+    const brandForm = new FormData();
+    brandForm.set("primary", "#c026d3");
+    brandForm.set("secondary", "#fdf4ff");
+    brandForm.set("accent", "#facc15");
+    brandForm.set("darkText", "#18181b");
+    brandForm.set("mutedText", "#71717a");
+    brandForm.set("style", "minimal");
+    brandForm.set("notes", "premium salon visuals");
+    const brandResponse = await app.request(
+      "/onboarding/glow-studio/brand",
+      { method: "POST", headers: { Cookie: cookie }, body: brandForm },
+      env,
+    );
+    expect(brandResponse.status).toBe(303);
+    expect(brandResponse.headers.get("location")).toContain(
+      "/onboarding/glow-studio/sample",
+    );
+    expect((await store.getBrand("glow-studio"))?.colors).toMatchObject({
+      primary: "#c026d3",
+      secondary: "#fdf4ff",
+      accent: "#facc15",
+      darkText: "#18181b",
+      mutedText: "#71717a",
+    });
+    expect(await store.listTemplatePatterns("glow-studio")).toHaveLength(4);
+
+    const editResponse = await app.request(
+      "/onboarding/glow-studio/business",
+      {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          businessName: "Glow Studio Labs",
+          category: "Design service",
+          phone: "+91 99999 77777",
+          websiteUrl: "glow.example",
+          country: "India",
+          timezone: "Asia/Kolkata",
+        }).toString(),
+      },
+      env,
+    );
+    expect(editResponse.status).toBe(303);
+    expect(await store.getBrand("glow-studio")).toMatchObject({
+      businessName: "Glow Studio Labs",
+      phone: "+91 99999 77777",
+      websiteUrl: "https://glow.example",
+    });
+    expect((await store.getBrand("glow-studio"))?.defaultPosterRules).toContain(
+      "Create content suitable for Design service.",
+    );
+
+    const sampleContentResponse = await app.request(
+      "/onboarding/glow-studio/sample-content",
+      {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          date: today,
+          contentStyle: "educational",
+          contentNotes: "brand identity package",
+        }).toString(),
+      },
+      env,
+    );
+    expect(sampleContentResponse.status).toBe(303);
+    expect(await store.getCalendarEntry("glow-studio", today)).toMatchObject({
+      topic: expect.stringContaining("Design"),
+      posterType: "general",
+    });
+
+    const planResponse = await app.request(
+      "/onboarding/glow-studio/plan",
+      {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          month: "2026-06",
+          frequency: "weekdays",
+          style: "mixed",
+          notes: "focus on hair care and booking reminders",
+        }).toString(),
+      },
+      env,
+    );
+    expect(planResponse.status).toBe(303);
+    expect(
+      await store.listCalendarEntries("glow-studio", { month: "2026-06" }),
+    ).not.toHaveLength(0);
+
+    const activateResponse = await app.request(
+      "/onboarding/glow-studio/activate",
+      {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          enabled: "on",
+          localTime: "08:00",
+          recipientEmails: "owner@example.com",
+        }).toString(),
+      },
+      env,
+    );
+    expect(activateResponse.status).toBe(303);
+    expect(activateResponse.headers.get("location")).toContain(
+      "/app/glow-studio",
+    );
+    expect(await store.getAutomationSettings("glow-studio")).toMatchObject({
+      enabled: true,
+      localTime: "08:00",
+      posterTypes: ["general"],
+      emailEnabled: false,
+      recipientEmails: ["owner@example.com"],
+    });
+  });
+
   it("saves Gemini models and image resolution from the dashboard", async () => {
     const loginResponse = await app.request(
       "/admin/login",
@@ -804,6 +971,26 @@ describe("daily poster packet worker", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/jpeg");
     expect(response.headers.get("etag")).toBe('"asset-etag"');
+  });
+
+  it("skips SVG placeholders when preparing image references", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("<svg></svg>", {
+          status: 200,
+          headers: { "content-type": "image/svg+xml; charset=utf-8" },
+        }),
+      ),
+    );
+
+    await expect(
+      imageUrlToBase64({
+        url: "/onboarding-assets/placeholder-logo.svg",
+        env,
+        publicBaseUrl: "https://poster.example.com",
+      }),
+    ).resolves.toBeNull();
   });
 
   it("applies the Smile Craft poster preset from the dashboard", async () => {
