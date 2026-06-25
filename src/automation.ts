@@ -147,12 +147,22 @@ export async function runAutomationHeartbeat(input: {
   const now = input.now ?? new Date();
   if (!automationIsDue(settings, timezone, now)) return [];
   const date = todayInTimezone(timezone, now);
-  const types = settings.posterTypes.filter((type) =>
-    AUTOMATABLE_POSTER_TYPES.includes(type),
-  );
+  const calendarEntry = await store.getCalendarEntry(businessSlug, date);
+  if (calendarEntry?.status === "skipped") return [];
+  const types = calendarEntry
+    ? [calendarEntry.posterType]
+    : settings.posterTypes.filter((type) =>
+        AUTOMATABLE_POSTER_TYPES.includes(type),
+      );
   const results: AutomationRun[] = [];
 
   for (const posterType of types) {
+    if (
+      posterType === "reference" &&
+      calendarEntry?.posterMode !== "inspiration"
+    ) {
+      continue;
+    }
     if (!(await store.claimAutomationRun(businessSlug, posterType, date))) {
       continue;
     }
@@ -175,6 +185,7 @@ export async function runAutomationHeartbeat(input: {
         dateOrToday: date,
         requestUrl,
         force: settings.forceGeneration,
+        calendarEntry,
       });
       run = {
         ...run,
@@ -187,6 +198,12 @@ export async function runAutomationHeartbeat(input: {
         imageUrl: poster.imageUrl,
         error: poster.failureReason,
       };
+      if (poster.status === "ready" && calendarEntry) {
+        await store.upsertCalendarEntry({
+          ...calendarEntry,
+          status: "poster_ready",
+        });
+      }
       if (poster.status === "ready" && settings.emailEnabled) {
         try {
           run.providerMessageId = await sendPosterEmail({

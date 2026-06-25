@@ -1,8 +1,203 @@
 # Handoff: Daily Poster Packet
 
-Last updated: 2026-06-18  
+Last updated: 2026-06-24  
 Project path: `/Users/ananthu/Desktop/new_repos/auto-content-maker`  
 Project name: `daily-poster-packet`
+
+## 2026-06-24 simplified customer app, content calendar, and template patterns
+
+The product direction is now the simpler sellable flow:
+
+> Plan your month once. Get a branded poster every day.
+
+The advanced admin studio still exists, but login now lands in the new customer
+app at:
+
+```text
+/app/:businessSlug
+```
+
+The customer-facing app keeps the main workflow simple:
+
+- Dashboard / Today’s poster
+- Monthly content calendar
+- Inspiration poster creation
+- Brand & Templates
+- Simple automation settings
+- Poster history
+
+The old admin studio remains available from the customer app as an advanced
+link:
+
+```text
+/admin/:businessSlug
+```
+
+### Content calendar
+
+Migration:
+
+```text
+migrations/0013_content_calendar.sql
+```
+
+New table:
+
+```text
+content_calendar_entries
+```
+
+Each business/date can now have one planned content item with:
+
+- date
+- topic
+- message
+- CTA
+- poster mode: `normal`, `exact_message`, or `inspiration`
+- poster type
+- optional template id
+- optional inspiration image URL
+- notes
+- status: `planned`, `poster_ready`, `needs_message`, or `skipped`
+
+The customer calendar supports:
+
+- AI-generate the full month
+- manually edit any date
+- upload an inspiration image for a date
+- generate a poster immediately for a date
+- select a saved poster style/template for a date
+
+If Gemini text generation is unavailable when generating the monthly calendar,
+the app falls back to a simple built-in monthly topic set.
+
+### Automation now reads the calendar first
+
+The five-minute heartbeat still uses `poster_automation_settings`, but the
+daily run now checks `content_calendar_entries` first:
+
+1. If today’s calendar row is `skipped`, automation does nothing.
+2. If today has a calendar row, its `posterType`, message, mode, template, and
+   inspiration image guide generation.
+3. If no calendar row exists, the older automation flow still runs from enabled
+   poster types.
+4. If generation succeeds from a calendar row, that row is marked
+   `poster_ready`.
+
+This preserves old behavior while allowing the new product flow to drive daily
+posters.
+
+### Inspiration poster flow
+
+In the customer app, inspiration posters are now date-specific:
+
+- user opens a calendar date or the Inspiration section;
+- uploads an inspiration poster;
+- adds their own message or leaves notes;
+- poster mode becomes `inspiration`;
+- poster type is stored as `reference`;
+- generation uses the uploaded inspiration image for that calendar item.
+
+This avoids requiring a permanent reference-remake source poster for one-off
+inspiration posters.
+
+Safety rules still apply:
+
+- use layout, typography feel, hierarchy, spacing, and visual rhythm only;
+- do not copy competitor logo, business name, contact details, exact wording,
+  claims, offers, people, or misleading product imagery.
+
+### Brand & Templates
+
+Migration:
+
+```text
+migrations/0014_template_patterns.sql
+```
+
+New table:
+
+```text
+poster_template_patterns
+```
+
+Template patterns are reusable visual/style cards for a business. They store:
+
+- template id
+- name
+- description
+- best-for text
+- optional poster type
+- layout prompt
+- style prompt
+- optional preview image URL
+- optional reference image URLs
+- active/paused state
+
+The customer app’s **Brand & Templates** section shows:
+
+- current logo
+- current brand reference board
+- typography summary
+- visual mood/layout/photo-style summary
+- saved template pattern cards
+- link to the advanced admin brand editor
+
+Routes:
+
+```text
+POST /app/:businessSlug/templates/generate
+POST /app/:businessSlug/templates/toggle
+POST /app/:businessSlug/templates/delete
+```
+
+`templates/generate` asks Gemini for reusable template pattern cards. If Gemini
+is not configured or fails, it saves a built-in starter set:
+
+- Clean Educational Tip
+- Bold Promo Card
+- Festival Greeting
+- Minimal Premium
+
+Template patterns are intentionally visual/product-facing. The customer sees
+cards and simple names, not raw prompt editing.
+
+### Template-aware generation
+
+`content_calendar_entries.template_id` can point to a saved template pattern.
+
+When a poster is generated from a calendar entry with a selected template:
+
+- the template name/description are included in the content source metadata;
+- the template layout prompt and style prompt are injected into the image
+  prompt;
+- the selected template becomes the dominant layout/style direction;
+- brand logo, contact details, brand colors, and factual content remain
+  protected.
+
+If no template is selected, generation behaves as before.
+
+### New/updated files
+
+- `src/customer-render.ts` — new simplified customer app UI.
+- `src/index.ts` — customer app routes, calendar routes, template routes,
+  login now redirects to `/app/:businessSlug`.
+- `src/types.ts` — `ContentCalendarEntry`, `PosterTemplatePattern`, template
+  fields on calendar entries.
+- `src/store.ts` — D1 persistence for content calendar and template patterns.
+- `src/orchestrator.ts` — calendar-aware and template-aware generation.
+- `src/automation.ts` — heartbeat now uses today’s calendar row first.
+- `test/app.test.ts` — in-memory store updated for calendar/template methods.
+- `PRODUCT_USERFLOW_OPTIONS.md` — product/user-flow decision document.
+- `PRODUCT_GROWTH_PLAN.md` — simplified MVP/growth/pricing plan.
+
+Latest verification:
+
+```text
+npm run typecheck
+npm test
+34 tests passed
+```
 
 ## 2026-06-22 reference-remake poster type
 

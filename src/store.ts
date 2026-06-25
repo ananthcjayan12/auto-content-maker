@@ -2,7 +2,10 @@ import type {
   AutomationRun,
   AutomationSettings,
   BusinessBrandSystem,
+  CalendarEntryStatus,
+  CalendarPosterMode,
   ContentSourceSettings,
+  ContentCalendarEntry,
   CostBreakdown,
   DailyPosterPacket,
   GenerationSettings,
@@ -13,6 +16,7 @@ import type {
   ImageResolution,
   PosterStore,
   PosterPromptSettings,
+  PosterTemplatePattern,
   PosterType,
   PosterTypeReference,
   TextModelId,
@@ -112,6 +116,38 @@ interface AutomationRunRow {
   image_url: string | null;
   provider_message_id: string | null;
   error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ContentCalendarEntryRow {
+  business_slug: string;
+  calendar_date: string;
+  topic: string;
+  message: string | null;
+  cta: string | null;
+  poster_mode: CalendarPosterMode;
+  poster_type: PosterType;
+  template_id?: string | null;
+  inspiration_image_url: string | null;
+  notes: string | null;
+  status: CalendarEntryStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+interface PosterTemplatePatternRow {
+  business_slug: string;
+  template_id: string;
+  name: string;
+  description: string;
+  best_for: string;
+  poster_type: PosterType | null;
+  layout_prompt: string;
+  style_prompt: string;
+  preview_image_url: string | null;
+  reference_image_urls_json: string;
+  is_active: number;
   created_at: string;
   updated_at: string;
 }
@@ -290,6 +326,44 @@ function mapAutomationRun(row: AutomationRunRow): AutomationRun {
     imageUrl: row.image_url,
     providerMessageId: row.provider_message_id,
     error: row.error,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapCalendarEntry(row: ContentCalendarEntryRow): ContentCalendarEntry {
+  return {
+    businessSlug: row.business_slug,
+    date: row.calendar_date,
+    topic: row.topic,
+    message: row.message,
+    cta: row.cta,
+    posterMode: row.poster_mode,
+    posterType: row.poster_type,
+    templateId: row.template_id ?? null,
+    inspirationImageUrl: row.inspiration_image_url,
+    notes: row.notes,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapTemplatePattern(
+  row: PosterTemplatePatternRow,
+): PosterTemplatePattern {
+  return {
+    businessSlug: row.business_slug,
+    templateId: row.template_id,
+    name: row.name,
+    description: row.description,
+    bestFor: row.best_for,
+    posterType: row.poster_type,
+    layoutPrompt: row.layout_prompt,
+    stylePrompt: row.style_prompt,
+    previewImageUrl: row.preview_image_url,
+    referenceImageUrls: parseJson<string[]>(row.reference_image_urls_json, []),
+    isActive: Boolean(row.is_active),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -549,6 +623,179 @@ export class D1PosterStore implements PosterStore {
       )
       .run();
     return (await this.getAutomationSettings(settings.businessSlug))!;
+  }
+
+  async getCalendarEntry(
+    businessSlug: string,
+    date: string,
+  ): Promise<ContentCalendarEntry | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT * FROM content_calendar_entries
+         WHERE business_slug = ? AND calendar_date = ?
+         LIMIT 1`,
+      )
+      .bind(businessSlug, date)
+      .first<ContentCalendarEntryRow>();
+    return row ? mapCalendarEntry(row) : null;
+  }
+
+  async listCalendarEntries(
+    businessSlug: string,
+    options: { month?: string; from?: string; to?: string },
+  ): Promise<ContentCalendarEntry[]> {
+    if (options.month) {
+      const result = await this.db
+        .prepare(
+          `SELECT * FROM content_calendar_entries
+           WHERE business_slug = ? AND substr(calendar_date, 1, 7) = ?
+           ORDER BY calendar_date ASC`,
+        )
+        .bind(businessSlug, options.month)
+        .all<ContentCalendarEntryRow>();
+      return (result.results ?? []).map(mapCalendarEntry);
+    }
+    const from = options.from ?? "0000-01-01";
+    const to = options.to ?? "9999-12-31";
+    const result = await this.db
+      .prepare(
+        `SELECT * FROM content_calendar_entries
+         WHERE business_slug = ? AND calendar_date BETWEEN ? AND ?
+         ORDER BY calendar_date ASC`,
+      )
+      .bind(businessSlug, from, to)
+      .all<ContentCalendarEntryRow>();
+    return (result.results ?? []).map(mapCalendarEntry);
+  }
+
+  async upsertCalendarEntry(
+    entry: ContentCalendarEntry,
+  ): Promise<ContentCalendarEntry> {
+    await this.db
+      .prepare(
+        `INSERT INTO content_calendar_entries (
+          business_slug, calendar_date, topic, message, cta, poster_mode,
+          poster_type, template_id, inspiration_image_url, notes, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(business_slug, calendar_date) DO UPDATE SET
+          topic = excluded.topic,
+          message = excluded.message,
+          cta = excluded.cta,
+          poster_mode = excluded.poster_mode,
+          poster_type = excluded.poster_type,
+          template_id = excluded.template_id,
+          inspiration_image_url = excluded.inspiration_image_url,
+          notes = excluded.notes,
+          status = excluded.status,
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+      )
+      .bind(
+        entry.businessSlug,
+        entry.date,
+        entry.topic,
+        entry.message,
+        entry.cta,
+        entry.posterMode,
+        entry.posterType,
+        entry.templateId,
+        entry.inspirationImageUrl,
+        entry.notes,
+        entry.status,
+      )
+      .run();
+    return (await this.getCalendarEntry(entry.businessSlug, entry.date))!;
+  }
+
+  async deleteCalendarEntry(businessSlug: string, date: string): Promise<void> {
+    await this.db
+      .prepare(
+        "DELETE FROM content_calendar_entries WHERE business_slug = ? AND calendar_date = ?",
+      )
+      .bind(businessSlug, date)
+      .run();
+  }
+
+  async getTemplatePattern(
+    businessSlug: string,
+    templateId: string,
+  ): Promise<PosterTemplatePattern | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT * FROM poster_template_patterns
+         WHERE business_slug = ? AND template_id = ?
+         LIMIT 1`,
+      )
+      .bind(businessSlug, templateId)
+      .first<PosterTemplatePatternRow>();
+    return row ? mapTemplatePattern(row) : null;
+  }
+
+  async listTemplatePatterns(
+    businessSlug: string,
+  ): Promise<PosterTemplatePattern[]> {
+    const result = await this.db
+      .prepare(
+        `SELECT * FROM poster_template_patterns
+         WHERE business_slug = ?
+         ORDER BY is_active DESC, updated_at DESC, name ASC`,
+      )
+      .bind(businessSlug)
+      .all<PosterTemplatePatternRow>();
+    return (result.results ?? []).map(mapTemplatePattern);
+  }
+
+  async upsertTemplatePattern(
+    pattern: PosterTemplatePattern,
+  ): Promise<PosterTemplatePattern> {
+    await this.db
+      .prepare(
+        `INSERT INTO poster_template_patterns (
+          business_slug, template_id, name, description, best_for,
+          poster_type, layout_prompt, style_prompt, preview_image_url,
+          reference_image_urls_json, is_active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(business_slug, template_id) DO UPDATE SET
+          name = excluded.name,
+          description = excluded.description,
+          best_for = excluded.best_for,
+          poster_type = excluded.poster_type,
+          layout_prompt = excluded.layout_prompt,
+          style_prompt = excluded.style_prompt,
+          preview_image_url = excluded.preview_image_url,
+          reference_image_urls_json = excluded.reference_image_urls_json,
+          is_active = excluded.is_active,
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+      )
+      .bind(
+        pattern.businessSlug,
+        pattern.templateId,
+        pattern.name,
+        pattern.description,
+        pattern.bestFor,
+        pattern.posterType,
+        pattern.layoutPrompt,
+        pattern.stylePrompt,
+        pattern.previewImageUrl,
+        JSON.stringify(pattern.referenceImageUrls),
+        Number(pattern.isActive),
+      )
+      .run();
+    return (await this.getTemplatePattern(
+      pattern.businessSlug,
+      pattern.templateId,
+    ))!;
+  }
+
+  async deleteTemplatePattern(
+    businessSlug: string,
+    templateId: string,
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        "DELETE FROM poster_template_patterns WHERE business_slug = ? AND template_id = ?",
+      )
+      .bind(businessSlug, templateId)
+      .run();
   }
 
   async claimAutomationRun(

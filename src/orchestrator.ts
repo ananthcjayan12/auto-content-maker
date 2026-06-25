@@ -23,6 +23,7 @@ import {
 import type {
   Bindings,
   BusinessBrandSystem,
+  ContentCalendarEntry,
   GeminiUsage,
   GenerationSettings,
   GeneratedPoster,
@@ -30,6 +31,7 @@ import type {
   ImageResolution,
   PosterStore,
   PosterPromptSettings,
+  PosterTemplatePattern,
   PosterType,
   PosterTypeReference,
 } from "./types";
@@ -438,7 +440,7 @@ function buildBriefPrompt(input: {
     }),
   );
   const sourceInstruction = input.suppliedContent
-    ? `\n\nSUPPLIED CONTENT FROM TODAY'S GOOGLE SHEET ROW\n${JSON.stringify(input.suppliedContent, null, 2)}\nEdit this copy for clarity and mobile readability while preserving every fact and meaning. Do not replace it with a different topic.`
+    ? `\n\nSUPPLIED CONTENT FOR THIS DATE\n${JSON.stringify(input.suppliedContent, null, 2)}\nEdit this copy for clarity and mobile readability while preserving every fact and meaning. Do not replace it with a different topic.`
     : "";
   const reviewInstruction = input.hasReviewScreenshot
     ? "\n\nA customer review screenshot is attached. Do not extract, transcribe, paraphrase, or repeat its review text in the JSON. The screenshot itself will be used as the visible testimonial. Keep reviewQuote and reviewAttribution empty. Generate one short, warm, original social-proof headline for the clinic outside the screenshot, plus an optional concise CTA. Creative directions include “A new review,” “Another happy smile,” “Kind words from our patient,” “Another reason to smile,” and “Your trust makes us smile”; vary the wording naturally and do not invent counts, outcomes, or medical results."
@@ -529,6 +531,7 @@ export function buildImagePrompt(input: {
   brand: BusinessBrandSystem;
   posterType: PosterType;
   typeReference: PosterTypeReference | null;
+  templatePattern?: PosterTemplatePattern | null;
   date: string;
   brief: Record<string, unknown>;
   contextUrl: string;
@@ -541,6 +544,7 @@ export function buildImagePrompt(input: {
     brand,
     posterType,
     typeReference,
+    templatePattern,
     date,
     brief,
     runId,
@@ -557,6 +561,19 @@ export function buildImagePrompt(input: {
   const sections = [
     fillPromptTemplate(promptSettings.masterImagePromptTemplate, variables),
     fillPromptTemplate(promptSettings.posterTypePrompts[posterType], variables),
+    templatePattern
+      ? `SELECTED TEMPLATE PATTERN: ${templatePattern.name}
+Best for: ${templatePattern.bestFor}
+Description: ${templatePattern.description}
+
+Layout guidance:
+${templatePattern.layoutPrompt}
+
+Style guidance:
+${templatePattern.stylePrompt}
+
+Use this template as the dominant layout and visual pattern for this poster while preserving the business logo, contact details, brand colors, and safe factual content.`
+      : "",
     fillPromptTemplate(promptSettings.referencePromptTemplate, variables),
     ...(posterType === "reference" ? [REFERENCE_REMAKE_IMAGE_OVERRIDE] : []),
     ...(posterType === "review" && typeof brief.reviewScreenshotUrl === "string"
@@ -591,6 +608,7 @@ async function generatePosterImage(input: {
   brief: Record<string, unknown>;
   briefUsage: GeminiUsage | null;
   started: GeneratedPoster;
+  editSourceImageUrl?: string | null;
 }): Promise<GeneratedPoster> {
   const {
     env,
@@ -608,6 +626,7 @@ async function generatePosterImage(input: {
     brief,
     briefUsage,
     started,
+    editSourceImageUrl,
   } = input;
   const imageModel = generationSettings.imageModel;
   const referenceUrls = typeReference?.referenceImageUrls.length
@@ -619,7 +638,13 @@ async function generatePosterImage(input: {
     posterType === "review" && typeof brief.reviewScreenshotUrl === "string"
       ? brief.reviewScreenshotUrl
       : null;
-  const [logo, board, posterReferences, reviewScreenshot] = await Promise.all([
+  const [editSource, logo, board, posterReferences, reviewScreenshot] =
+    await Promise.all([
+      imageUrlToBase64({
+        url: editSourceImageUrl ?? null,
+        env,
+        publicBaseUrl: base,
+      }),
     imageUrlToBase64({ url: brand.logoUrl, env, publicBaseUrl: base }),
     imageUrlToBase64({
       url: brand.brandReferenceBoardUrl,
@@ -637,6 +662,7 @@ async function generatePosterImage(input: {
   const availableReferenceSlots = Math.max(
     0,
     capability.maxInputImages -
+      Number(Boolean(editSource)) -
       Number(Boolean(logo)) -
       Number(Boolean(board)) -
       Number(Boolean(reviewScreenshot)),
@@ -646,6 +672,14 @@ async function generatePosterImage(input: {
     availableReferenceSlots,
   );
   const references: LabeledImageReference[] = [
+    editSource
+      ? {
+          ...editSource,
+          label: "Current generated poster to edit",
+          guidance:
+            "This is the existing poster image the user wants edited. Use it as the primary visual source, preserve the clinic identity, and apply only the requested user changes from the prompt.",
+        }
+      : null,
     reviewScreenshot
       ? {
           ...reviewScreenshot,
@@ -770,6 +804,8 @@ export async function generatePosterImageFromPrompt(input: {
   requestUrl: string;
   prompt: string;
   brief?: Record<string, unknown>;
+  calendarEntry?: ContentCalendarEntry | null;
+  editSourceImageUrl?: string | null;
 }): Promise<GeneratedPoster> {
   const { env, store, businessSlug, posterType, dateOrToday, requestUrl } =
     input;
@@ -792,10 +828,22 @@ export async function generatePosterImageFromPrompt(input: {
   );
   const brand = await store.getBrand(businessSlug);
   if (!brand) throw new Error("Business brand system not found.");
-  const typeReference = await store.getTypeReference(businessSlug, posterType);
-  if (posterType === "reference" && !hasSourcePoster(typeReference)) {
+  const [typeReference, calendarEntry] = await Promise.all([
+    store.getTypeReference(businessSlug, posterType),
+    input.calendarEntry === undefined
+      ? store.getCalendarEntry(businessSlug, date)
+      : Promise.resolve(input.calendarEntry),
+  ]);
+  const templatePattern = calendarEntry?.templateId
+    ? await store.getTemplatePattern(businessSlug, calendarEntry.templateId)
+    : null;
+  if (
+    posterType === "reference" &&
+    !calendarEntry?.inspirationImageUrl &&
+    !hasSourcePoster(typeReference)
+  ) {
     throw new Error(
-      "Upload at least one source poster before generating a Reference remake.",
+      "Upload an inspiration image for this date or save a source poster before generating a Reference remake.",
     );
   }
   const existing = await store.getGeneratedPoster(
@@ -848,6 +896,7 @@ export async function generatePosterImageFromPrompt(input: {
     brief,
     briefUsage: started.briefUsage,
     started,
+    editSourceImageUrl: input.editSourceImageUrl,
   });
 }
 
@@ -890,6 +939,7 @@ export async function runPosterOrchestrator(input: {
   dateOrToday: string;
   requestUrl: string;
   force?: boolean;
+  calendarEntry?: ContentCalendarEntry | null;
 }): Promise<GeneratedPoster> {
   const { env, store, businessSlug, posterType, dateOrToday, requestUrl } =
     input;
@@ -921,10 +971,22 @@ export async function runPosterOrchestrator(input: {
 
   const brand = await store.getBrand(businessSlug);
   if (!brand) throw new Error("Business brand system not found.");
-  const typeReference = await store.getTypeReference(businessSlug, posterType);
-  if (posterType === "reference" && !hasSourcePoster(typeReference)) {
+  const [typeReference, calendarEntry] = await Promise.all([
+    store.getTypeReference(businessSlug, posterType),
+    input.calendarEntry === undefined
+      ? store.getCalendarEntry(businessSlug, date)
+      : Promise.resolve(input.calendarEntry),
+  ]);
+  const templatePattern = calendarEntry?.templateId
+    ? await store.getTemplatePattern(businessSlug, calendarEntry.templateId)
+    : null;
+  if (
+    posterType === "reference" &&
+    !calendarEntry?.inspirationImageUrl &&
+    !hasSourcePoster(typeReference)
+  ) {
     throw new Error(
-      "Upload at least one source poster before generating a Reference remake.",
+      "Upload an inspiration image for this date or save a source poster before generating a Reference remake.",
     );
   }
 
@@ -973,13 +1035,27 @@ export async function runPosterOrchestrator(input: {
       (await store.getContentSourceSettings(businessSlug)) ??
       defaultContentSourceSettings(businessSlug);
     const sheetLookup =
-      posterType === "awareness"
+      !calendarEntry && posterType === "awareness"
         ? await resolveAwarenessContent(sourceSettings, date)
         : null;
-    const suppliedContent = sheetLookup?.row ?? null;
+    const calendarContent = calendarEntry
+      ? {
+          Date: calendarEntry.date,
+          Topic: calendarEntry.topic,
+          Message: calendarEntry.message ?? "",
+          CTA: calendarEntry.cta ?? "",
+          PosterMode: calendarEntry.posterMode,
+          PosterType: calendarEntry.posterType,
+          TemplateName: templatePattern?.name ?? "",
+          TemplateDescription: templatePattern?.description ?? "",
+          Notes: calendarEntry.notes ?? "",
+        }
+      : null;
+    const suppliedContent = calendarContent ?? sheetLookup?.row ?? null;
     const referencePosterUrl =
       posterType === "reference"
-        ? (typeReference?.referenceImageUrls[0] ??
+        ? (calendarEntry?.inspirationImageUrl ??
+          typeReference?.referenceImageUrls[0] ??
           typeReference?.productionReferenceImageUrl ??
           null)
         : null;
@@ -999,12 +1075,19 @@ export async function runPosterOrchestrator(input: {
       promptSettings,
       suppliedContent,
       referencePoster,
+      referenceMessage:
+        calendarEntry?.posterMode === "inspiration" ||
+        calendarEntry?.posterMode === "exact_message"
+          ? (calendarEntry.message ?? calendarEntry.topic)
+          : null,
     });
     const resolvedBrief: Record<string, unknown> = {
       ...briefResult.brief,
-      contentSource:
-        sheetLookup?.source ??
-        (posterType === "reference" ? "reference_poster" : "ai_generated"),
+      contentSource: calendarEntry
+        ? "content_calendar"
+        : (sheetLookup?.source ??
+          (posterType === "reference" ? "reference_poster" : "ai_generated")),
+      ...(calendarEntry ? { calendarEntry } : {}),
       ...(sheetLookup ? { contentSourceReason: sheetLookup.reason } : {}),
       ...(sheetLookup?.warning
         ? { contentSourceWarning: sheetLookup.warning }
@@ -1015,6 +1098,7 @@ export async function runPosterOrchestrator(input: {
       brand,
       posterType,
       typeReference,
+      templatePattern,
       date,
       brief: resolvedBrief,
       contextUrl,
