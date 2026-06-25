@@ -71,6 +71,16 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
+function isSupportedReferenceImage(contentType: string): boolean {
+  const normalized = contentType.toLowerCase().split(";")[0]?.trim() ?? "";
+  return (
+    normalized === "image/png" ||
+    normalized === "image/jpeg" ||
+    normalized === "image/webp" ||
+    normalized === "image/gif"
+  );
+}
+
 export async function imageUrlToBase64(input: {
   url: string | null;
   env: Bindings;
@@ -96,6 +106,7 @@ export async function imageUrlToBase64(input: {
       object.writeHttpMetadata(headers);
       const contentType =
         headers.get("content-type") || imageContentTypeForKey(key);
+      if (!isSupportedReferenceImage(contentType)) return null;
       const buffer = await object.arrayBuffer();
       return {
         url: parsed.toString(),
@@ -111,6 +122,7 @@ export async function imageUrlToBase64(input: {
     if (!response.ok) return null;
     const contentType = response.headers.get("content-type") || "";
     if (!contentType.toLowerCase().startsWith("image/")) return null;
+    if (!isSupportedReferenceImage(contentType)) return null;
     const buffer = await response.arrayBuffer();
     return {
       url: parsed.toString(),
