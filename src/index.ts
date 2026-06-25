@@ -307,7 +307,9 @@ function fallbackTemplatePatterns(input: {
     templateId: `${slugPart(pattern.name)}-${Date.now()}-${index + 1}`,
     ...pattern,
     previewImageUrl: null,
-    referenceImageUrls: input.referenceImageUrl ? [input.referenceImageUrl] : [],
+    referenceImageUrls: input.referenceImageUrl
+      ? [input.referenceImageUrl]
+      : [],
     isActive: true,
   }));
 }
@@ -980,8 +982,9 @@ app.post("/app/:businessSlug/calendar/edit-poster", async (c) => {
     "festival",
     "anniversary",
     "review",
-  ].filter((value, index, values): value is PosterType =>
-    Boolean(value) && values.indexOf(value) === index,
+  ].filter(
+    (value, index, values): value is PosterType =>
+      Boolean(value) && values.indexOf(value) === index,
   );
   const existingCandidates = await Promise.all(
     posterTypesToTry.map(async (posterType) => ({
@@ -1000,8 +1003,7 @@ app.post("/app/:businessSlug/calendar/edit-poster", async (c) => {
   if (!existing?.poster?.imageUrl) {
     return customerRedirect(c, businessSlug, {
       month: monthFromDate(resolvedDate),
-      error:
-        "Generate a poster for this date before using custom image edits.",
+      error: "Generate a poster for this date before using custom image edits.",
     });
   }
 

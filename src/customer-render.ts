@@ -831,7 +831,7 @@ export function renderCustomerApp(input: {
     const day = String(index + 1).padStart(2, "0");
     return `${month}-${day}`;
   });
-  
+
   const readyCount = calendarEntries.filter(
     (entry) => entry.status === "poster_ready",
   ).length;
@@ -840,22 +840,30 @@ export function renderCustomerApp(input: {
   ).length;
   const missingCount = dates.length - calendarEntries.length;
   const readyPercentage = Math.round((readyCount / dates.length) * 100);
-  
+
   const todayImage =
     todayPoster?.status === "ready" && todayPoster.imageUrl
       ? `<img src="${escapeHtml(todayPoster.imageUrl)}" alt="Today's generated poster">`
       : `<div style="padding: 40px; text-align: center; color: var(--text-muted); font-weight: 600;">No poster ready.<br><span style="font-weight:400; font-size:0.9rem;">Generate it now or wait for automation.</span></div>`;
-      
+
   const todayDateObj = new Date();
-  const dateFormatted = todayDateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+  const dateFormatted = todayDateObj.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
   const brandInitial = brand.businessName.charAt(0).toUpperCase();
 
   const calendarRows = dates
     .map((date) => {
       const entry = entryByDate.get(date) ?? null;
       const displayStatus = entry?.status ?? "empty";
-      const icon = displayStatus === "poster_ready" ? getCheckmarkIcon() : getEmptyCircle();
-      
+      const icon =
+        displayStatus === "poster_ready"
+          ? getCheckmarkIcon()
+          : getEmptyCircle();
+
       return `<div class="task-item">
         <div class="status-icon ${escapeHtml(displayStatus)}">${icon}</div>
         <div class="task-content">
@@ -874,11 +882,14 @@ export function renderCustomerApp(input: {
       </div>${entryForm({ brand, entry, date, templatePatterns })}`;
     })
     .join("");
-    
+
   const nextHtml = nextEntries.length
     ? nextEntries
         .map((entry) => {
-          const icon = entry.status === "poster_ready" ? getCheckmarkIcon() : getEmptyCircle();
+          const icon =
+            entry.status === "poster_ready"
+              ? getCheckmarkIcon()
+              : getEmptyCircle();
           return `<div class="task-item">
             <div class="status-icon ${escapeHtml(entry.status)}">${icon}</div>
             <div class="task-content">
@@ -889,7 +900,7 @@ export function renderCustomerApp(input: {
         })
         .join("")
     : `<div style="padding: 24px; text-align: center; color: var(--text-muted); font-weight: 600; border: 1px dashed var(--border-color); border-radius: var(--radius-md);">No upcoming tasks planned yet.</div>`;
-    
+
   const recentHtml = recentPosters.length
     ? `<div class="task-list">${recentPosters
         .map((poster) => {
@@ -910,7 +921,7 @@ export function renderCustomerApp(input: {
         })
         .join("")}</div>`
     : `<div style="padding: 24px; text-align: center; color: var(--text-muted); font-weight: 600; border: 1px dashed var(--border-color); border-radius: var(--radius-md);">Generated posters will appear here.</div>`;
-    
+
   return document(
     `${brand.businessName} — Dashboard`,
     `<header class="topbar">
@@ -1096,7 +1107,9 @@ export function renderCustomerApp(input: {
           templatePatterns.length
             ? `<div class="task-list">${templatePatterns
                 .map(
-                  (pattern) => `<div class="task-item" style="grid-template-columns: 60px 1fr auto;">
+                  (
+                    pattern,
+                  ) => `<div class="task-item" style="grid-template-columns: 60px 1fr auto;">
                     <div>${pattern.previewImageUrl ? `<img class="thumb" style="width:60px;height:60px;" src="${escapeHtml(pattern.previewImageUrl)}" alt="">` : `<span class="badge">${escapeHtml(pattern.isActive ? "active" : "paused")}</span>`}</div>
                     <div class="task-content">
                       <p class="title">${escapeHtml(pattern.name)}</p>
