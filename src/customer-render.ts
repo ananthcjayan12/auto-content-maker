@@ -18,6 +18,10 @@ function escapeHtml(value: unknown): string {
     .replaceAll("'", "&#039;");
 }
 
+function jsString(value: unknown): string {
+  return JSON.stringify(String(value ?? ""));
+}
+
 function selected(value: string, current: string): string {
   return value === current ? " selected" : "";
 }
@@ -68,6 +72,15 @@ function templateOptions(
           `<option value="${escapeHtml(pattern.templateId)}"${selected(pattern.templateId, current ?? "")}>${escapeHtml(pattern.name)}</option>`,
       ),
   ].join("");
+}
+
+function taskFilterLabel(value: string): string {
+  if (value === "all") return "All tasks";
+  if (value === "past") return "Past tasks";
+  if (value === "ready") return "Poster ready";
+  if (value === "empty") return "Empty dates";
+  if (value === "skipped") return "Skipped";
+  return "Future tasks";
 }
 
 const styles = `
@@ -377,6 +390,47 @@ const styles = `
     padding: 8px 14px;
     font-size: 0.85rem;
   }
+  .icon-button {
+    width: 38px;
+    height: 38px;
+    padding: 0;
+  }
+  .icon-button svg {
+    width: 17px;
+    height: 17px;
+    display: block;
+  }
+  .share-menu {
+    position: relative;
+    margin: 0;
+  }
+  .share-menu summary {
+    list-style: none;
+  }
+  .share-menu summary::-webkit-details-marker {
+    display: none;
+  }
+  .share-options {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 8px);
+    z-index: 150;
+    display: grid;
+    gap: 6px;
+    min-width: 190px;
+    padding: 8px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+  }
+  .share-options a,
+  .share-options button {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 9px 10px;
+    font-size: 0.86rem;
+  }
   
   /* Forms */
   label {
@@ -674,6 +728,10 @@ const styles = `
     .modal-body button {
       width: 100%;
     }
+    .share-options {
+      left: 0;
+      right: auto;
+    }
   }
 `;
 
@@ -686,6 +744,20 @@ function document(title: string, body: string): string {
       btn.innerHTML = '<svg style="width:14px;height:14px;margin-right:4px;vertical-align:middle;" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> <span>Copied!</span>';
       setTimeout(() => { btn.innerHTML = old; }, 1500);
     });
+  }
+  function copyShareUrl(url, btn) {
+    navigator.clipboard.writeText(url).then(() => {
+      const old = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.textContent = old; }, 1400);
+    });
+  }
+  function sharePoster(url, text, btn) {
+    if (navigator.share) {
+      navigator.share({ title: text || 'Generated poster', text: text || 'Generated poster', url }).catch(() => {});
+      return;
+    }
+    copyShareUrl(url, btn);
   }
   function openTargetDrawer() {
     if (!location.hash) return;
@@ -709,6 +781,15 @@ function document(title: string, body: string): string {
     modal.classList.remove('is-open');
     document.body.style.overflow = '';
   }
+  function openRegeneratePosterModal(date, posterType, title) {
+    const dateField = document.getElementById('regenerate-date');
+    const typeField = document.getElementById('regenerate-poster-type');
+    const titleNode = document.getElementById('regenerate-modal-title');
+    if (dateField) dateField.value = date;
+    if (typeField) typeField.value = posterType || 'general';
+    if (titleNode) titleNode.textContent = title ? 'Regenerate: ' + title : 'Regenerate Poster';
+    openModal('regenerate-modal');
+  }
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       document.querySelectorAll('.modal-overlay.is-open').forEach((modal) => closeModal(modal.id));
@@ -723,8 +804,54 @@ function getCheckmarkIcon(): string {
   return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 }
 
+function getEyeIcon(): string {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+}
+
+function getShareIcon(): string {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><path d="m8.6 10.6 6.8-4.2"></path><path d="m8.6 13.4 6.8 4.2"></path></svg>`;
+}
+
+function getRefreshIcon(): string {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.1 6.6"></path><path d="M3 12A9 9 0 0 1 18.1 5.4"></path><path d="M18 2v4h-4"></path><path d="M6 22v-4h4"></path></svg>`;
+}
+
 function getEmptyCircle(): string {
   return `<div style="width:14px;height:14px;border-radius:50%;border:2px solid currentColor;"></div>`;
+}
+
+function generatedPosterActions(input: {
+  brand: BusinessBrandSystem;
+  poster: GeneratedPoster;
+  title: string;
+  date: string;
+  posterType: PosterType;
+}): string {
+  const { brand, poster, title, date, posterType } = input;
+  if (!poster.imageUrl) return "";
+  const imageUrl = poster.imageUrl;
+  const shareText = `${brand.businessName}: ${title}`;
+  const regenerateOnclick = `openRegeneratePosterModal(${jsString(date)}, ${jsString(posterType)}, ${jsString(title)})`;
+  const shareOnclick = `sharePoster(${jsString(imageUrl)}, ${jsString(shareText)}, this)`;
+  const copyOnclick = `copyShareUrl(${jsString(imageUrl)}, this)`;
+  const encodedUrl = encodeURIComponent(imageUrl);
+  const encodedText = encodeURIComponent(shareText);
+  const whatsAppUrl = `https://wa.me/?text=${encodedText}%20${encodedUrl}`;
+  const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`;
+  const xUrl = `https://twitter.com/intent/tweet?text=${encodedText}&url=${encodedUrl}`;
+
+  return `<a class="button secondary small icon-button" href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener" title="Preview poster" aria-label="Preview poster">${getEyeIcon()}</a>
+          <details class="share-menu">
+            <summary class="button secondary small icon-button" title="Share poster" aria-label="Share poster">${getShareIcon()}</summary>
+            <div class="share-options">
+              <button class="secondary small" type="button" onclick="${escapeHtml(shareOnclick)}">Share</button>
+              <a class="button secondary small" href="${escapeHtml(whatsAppUrl)}" target="_blank" rel="noopener">WhatsApp</a>
+              <a class="button secondary small" href="${escapeHtml(facebookUrl)}" target="_blank" rel="noopener">Facebook</a>
+              <a class="button secondary small" href="${escapeHtml(xUrl)}" target="_blank" rel="noopener">X</a>
+              <button class="secondary small" type="button" onclick="${escapeHtml(copyOnclick)}">Copy link</button>
+            </div>
+          </details>
+          <button class="secondary small icon-button" type="button" onclick="${escapeHtml(regenerateOnclick)}" title="Regenerate poster" aria-label="Regenerate poster">${getRefreshIcon()}</button>`;
 }
 
 function entryForm(input: {
@@ -804,6 +931,7 @@ export function renderCustomerApp(input: {
   historyPage?: number;
   historyPosterType?: string;
   historyStatus?: string;
+  taskFilter?: string;
   editDate?: string;
   message?: string;
   error?: string;
@@ -822,14 +950,31 @@ export function renderCustomerApp(input: {
     message,
     error,
   } = input;
+  const taskFilter = input.taskFilter || "future";
   const entryByDate = new Map(
     calendarEntries.map((entry) => [entry.date, entry]),
   );
+  const readyPostersByDate = new Map<string, GeneratedPoster[]>();
+  for (const poster of recentPosters) {
+    if (poster.status !== "ready" || !poster.imageUrl) continue;
+    const posters = readyPostersByDate.get(poster.date) ?? [];
+    posters.push(poster);
+    readyPostersByDate.set(poster.date, posters);
+  }
   const [year, monthNumber] = month.split("-").map(Number);
   const daysInMonth = new Date(year!, monthNumber!, 0).getDate();
   const dates = Array.from({ length: daysInMonth }, (_, index) => {
     const day = String(index + 1).padStart(2, "0");
     return `${month}-${day}`;
+  });
+  const visibleDates = dates.filter((date) => {
+    const entry = entryByDate.get(date) ?? null;
+    if (taskFilter === "all") return true;
+    if (taskFilter === "past") return date < today;
+    if (taskFilter === "ready") return entry?.status === "poster_ready";
+    if (taskFilter === "empty") return !entry;
+    if (taskFilter === "skipped") return entry?.status === "skipped";
+    return date >= today;
   });
 
   const readyCount = calendarEntries.filter(
@@ -855,16 +1000,25 @@ export function renderCustomerApp(input: {
   });
   const brandInitial = brand.businessName.charAt(0).toUpperCase();
 
-  const calendarRows = dates
-    .map((date) => {
-      const entry = entryByDate.get(date) ?? null;
-      const displayStatus = entry?.status ?? "empty";
-      const icon =
-        displayStatus === "poster_ready"
-          ? getCheckmarkIcon()
-          : getEmptyCircle();
+  const calendarRows = visibleDates.length
+    ? visibleDates
+        .map((date) => {
+          const entry = entryByDate.get(date) ?? null;
+          const posterType = entry?.posterType ?? "general";
+          const readyPosters = readyPostersByDate.get(date) ?? [];
+          const generatedPoster =
+            readyPosters.find((poster) => poster.posterType === posterType) ??
+            readyPosters[0] ??
+            null;
+          const displayStatus = generatedPoster
+            ? "poster_ready"
+            : (entry?.status ?? "empty");
+          const icon =
+            displayStatus === "poster_ready"
+              ? getCheckmarkIcon()
+              : getEmptyCircle();
 
-      return `<div class="task-item">
+          return `<div class="task-item">
         <div class="status-icon ${escapeHtml(displayStatus)}">${icon}</div>
         <div class="task-content">
           <p class="title">${escapeHtml(entry?.topic ?? "No content planned")} <span class="badge" style="margin-left: 8px;">${escapeHtml(date.slice(5))}</span></p>
@@ -874,14 +1028,25 @@ export function renderCustomerApp(input: {
         <div class="task-actions">
           ${entry?.inspirationImageUrl ? `<img class="thumb" src="${escapeHtml(entry.inspirationImageUrl)}" alt="Inspiration">` : ""}
           <a class="button secondary small" href="#edit-${escapeHtml(date)}">Edit</a>
-          <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/calendar/generate-poster">
-            <input type="hidden" name="date" value="${escapeHtml(date)}">
-            <button class="small" type="submit">Generate</button>
-          </form>
+          ${
+            generatedPoster
+              ? generatedPosterActions({
+                  brand,
+                  poster: generatedPoster,
+                  title: entry?.topic ?? "Generated poster",
+                  date,
+                  posterType,
+                })
+              : `<form method="post" action="/app/${escapeHtml(brand.businessSlug)}/calendar/generate-poster">
+                  <input type="hidden" name="date" value="${escapeHtml(date)}">
+                  <button class="small" type="submit">Generate</button>
+                </form>`
+          }
         </div>
       </div>${entryForm({ brand, entry, date, templatePatterns })}`;
-    })
-    .join("");
+        })
+        .join("")
+    : `<div style="padding: 24px; text-align: center; color: var(--text-muted); font-weight: 600; border: 1px dashed var(--border-color); border-radius: var(--radius-md);">No ${escapeHtml(taskFilterLabel(taskFilter).toLowerCase())} for this month.</div>`;
 
   const nextHtml = nextEntries.length
     ? nextEntries
@@ -921,6 +1086,9 @@ export function renderCustomerApp(input: {
         })
         .join("")}</div>`
     : `<div style="padding: 24px; text-align: center; color: var(--text-muted); font-weight: 600; border: 1px dashed var(--border-color); border-radius: var(--radius-md);">Generated posters will appear here.</div>`;
+  const todayPosterType =
+    todayPoster?.posterType ?? todayEntry?.posterType ?? "general";
+  const todayRegenerateOnclick = `openRegeneratePosterModal(${jsString(today)}, ${jsString(todayPosterType)}, ${jsString(todayEntry?.topic ?? "Today's poster")})`;
 
   return document(
     `${brand.businessName} — Dashboard`,
@@ -937,6 +1105,9 @@ export function renderCustomerApp(input: {
               : `<span class="pulse-dot-paused" title="Automation Paused"></span>`
           }
           <a class="button secondary small" href="/admin/${escapeHtml(brand.businessSlug)}">Admin ↗</a>
+          <form method="post" action="/admin/logout" style="margin:0;">
+            <button class="secondary small" type="submit">Logout</button>
+          </form>
         </div>
       </div>
       <nav class="nav">
@@ -1006,7 +1177,7 @@ export function renderCustomerApp(input: {
             <div class="task-actions" style="justify-content: flex-start; margin-top: auto;">
               ${todayPoster?.imageUrl ? `<a class="button" href="${escapeHtml(todayPoster.imageUrl)}" target="_blank" rel="noopener">Download File</a>` : ""}
               <a class="button secondary" href="#edit-${escapeHtml(today)}">Edit Details</a>
-              <button class="secondary" type="button" onclick="openModal('regenerate-modal')">Regenerate</button>
+              <button class="secondary" type="button" onclick="${escapeHtml(todayRegenerateOnclick)}">Regenerate</button>
             </div>
           </div>
         </article>
@@ -1023,8 +1194,8 @@ export function renderCustomerApp(input: {
           </div>
           <div class="modal-body">
             <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/calendar/edit-poster">
-              <input type="hidden" name="date" value="${escapeHtml(today)}">
-              <input type="hidden" name="posterType" value="${escapeHtml(todayPoster?.posterType ?? todayEntry?.posterType ?? "general")}">
+              <input id="regenerate-date" type="hidden" name="date" value="${escapeHtml(today)}">
+              <input id="regenerate-poster-type" type="hidden" name="posterType" value="${escapeHtml(todayPosterType)}">
               <label>Custom regeneration instruction</label>
               <textarea name="editInstruction" required placeholder="Example: Keep the same layout, make the headline shorter, use a softer premium background, and make the CTA more visible."></textarea>
               <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 6px;">The current poster image will be used as the source, then regenerated according to your instruction while keeping the brand logo, colors, and contact details consistent.</p>
@@ -1042,10 +1213,18 @@ export function renderCustomerApp(input: {
         <div style="display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 16px; margin-bottom: 24px;">
           <div>
             <h2>Daily Tasks</h2>
-            <p style="color: var(--text-secondary); margin: 0;">${escapeHtml(month)}. Manage your monthly content pipeline.</p>
+            <p style="color: var(--text-secondary); margin: 0;">${escapeHtml(month)} · ${escapeHtml(taskFilterLabel(taskFilter))}. Manage your monthly content pipeline.</p>
           </div>
-          <form method="get" action="/app/${escapeHtml(brand.businessSlug)}">
+          <form method="get" action="/app/${escapeHtml(brand.businessSlug)}#calendar" style="display:flex; gap: 8px; flex-wrap: wrap; align-items: center;">
             <input type="month" name="month" value="${escapeHtml(month)}" onchange="this.form.submit()" style="width: auto; padding: 8px 12px; font-weight: 600;">
+            <select name="taskFilter" onchange="this.form.submit()" style="width: auto; padding: 8px 12px; font-weight: 600;">
+              <option value="future"${selected("future", taskFilter)}>Future tasks</option>
+              <option value="all"${selected("all", taskFilter)}>All tasks</option>
+              <option value="past"${selected("past", taskFilter)}>Past tasks</option>
+              <option value="ready"${selected("ready", taskFilter)}>Poster ready</option>
+              <option value="empty"${selected("empty", taskFilter)}>Empty dates</option>
+              <option value="skipped"${selected("skipped", taskFilter)}>Skipped</option>
+            </select>
           </form>
         </div>
 

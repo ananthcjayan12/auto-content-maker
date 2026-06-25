@@ -1,8 +1,188 @@
 # Handoff: Daily Poster Packet
 
-Last updated: 2026-06-24  
+Last updated: 2026-06-25  
 Project path: `/Users/ananthu/Desktop/new_repos/auto-content-maker`  
 Project name: `daily-poster-packet`
+
+## 2026-06-25 onboarding, SaaS landing auth, and future-first tasks
+
+The customer acquisition/onboarding flow has been redesigned around a normal
+SaaS entry point and a guided customer setup wizard.
+
+### Landing/auth page
+
+The root landing page no longer exposes all customer/business names in a public
+dropdown.
+
+The landing page now presents normal SaaS-style actions:
+
+- **Sign up** → `/onboarding/new`
+- **Login** → workspace slug + admin token form
+
+Login still posts to:
+
+```text
+POST /admin/login
+```
+
+but the user manually enters the workspace slug instead of selecting from a
+public business list.
+
+### Customer onboarding flow
+
+New first-time customer setup routes:
+
+```text
+GET  /onboarding/new
+POST /onboarding/business
+GET  /onboarding/:businessSlug/business
+POST /onboarding/:businessSlug/business
+GET  /onboarding/:businessSlug/brand
+POST /onboarding/:businessSlug/brand
+POST /onboarding/:businessSlug/brand/suggest-colors
+GET  /onboarding/:businessSlug/sample
+POST /onboarding/:businessSlug/sample-content
+POST /onboarding/:businessSlug/sample
+GET  /onboarding/:businessSlug/plan
+POST /onboarding/:businessSlug/plan
+GET  /onboarding/:businessSlug/activate
+POST /onboarding/:businessSlug/activate
+```
+
+The onboarding flow is:
+
+1. Business details
+2. Brand setup
+3. Sample content/poster
+4. Monthly plan
+5. Activation
+
+Users can now go back and forth between onboarding steps. Once a business
+exists, the progress steps are clickable.
+
+The mobile onboarding layout was simplified:
+
+- compact progress bar instead of a heavy step list;
+- full-width thumb-friendly actions;
+- reduced card chrome;
+- less secondary text;
+- first-step CTA visible in a mobile viewport.
+
+### Business/category setup
+
+Business category now includes:
+
+- Clinic
+- Restaurant
+- Salon
+- Gym
+- Real estate
+- Retail store
+- Consultant
+- Software service
+- Design service
+- Other small business
+
+Category is stored in the existing brand rules, not a new migration:
+
+```text
+Create content suitable for {category}.
+```
+
+This category is used to guide sample content and calendar generation.
+
+### Brand color setup
+
+Onboarding brand setup now supports the full palette:
+
+- primary
+- secondary
+- accent
+- dark text
+- muted text
+
+There is also a **Suggest colors from logo** action:
+
+```text
+POST /onboarding/:businessSlug/brand/suggest-colors
+```
+
+It uploads/saves the logo if supplied, asks a cheap Gemini text/vision call for
+a JSON palette, and falls back safely if Gemini is unavailable or no raster logo
+is available.
+
+SVG placeholder assets are allowed for UI display but are skipped when preparing
+Gemini image references, preventing `Unsupported MIME type: image/svg+xml`.
+
+### Sample content/poster step
+
+The sample step now lets users create sample content before generating the
+sample poster.
+
+```text
+POST /onboarding/:businessSlug/sample-content
+```
+
+It uses Gemini when configured and falls back to category-aware built-in content.
+Software service and design service categories have tailored fallback content.
+
+### Customer app logout
+
+The customer app topbar now includes a logout button:
+
+```text
+POST /admin/logout
+```
+
+### Tasks are future-first
+
+The Tasks view now has filters:
+
+- Future tasks
+- All tasks
+- Past tasks
+- Poster ready
+- Empty dates
+- Skipped
+
+The default filter is:
+
+```text
+taskFilter=future
+```
+
+Monthly task generation now only creates future tasks:
+
+- current month starts from today;
+- future month starts from day 1;
+- past month does not backfill old dates.
+
+This applies to both:
+
+```text
+POST /app/:businessSlug/calendar/generate-month
+POST /onboarding/:businessSlug/plan
+```
+
+### New/updated files
+
+- `src/onboarding-render.ts` — new onboarding UI renderer.
+- `src/admin-render.ts` — SaaS-style landing/auth page without public business
+  dropdown.
+- `src/customer-render.ts` — logout button and task filters.
+- `src/index.ts` — onboarding routes, color suggestion, sample content,
+  future-only calendar generation.
+- `src/orchestrator.ts` — skips unsupported SVG image references for Gemini.
+- `test/app.test.ts` — regression coverage for onboarding, landing auth,
+  future task filters, SVG skipping, and future-only generation.
+
+Latest verification:
+
+```text
+npm run typecheck
+npm test
+37 tests passed
+```
 
 ## 2026-06-24 simplified customer app, content calendar, and template patterns
 

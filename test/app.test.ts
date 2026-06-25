@@ -436,13 +436,15 @@ describe("daily poster packet worker", () => {
     });
   });
 
-  it("renders the business-select admin login on the homepage", async () => {
+  it("renders SaaS-style signup and login options on the homepage", async () => {
     const response = await app.request("/", {}, env);
     const html = await response.text();
     expect(response.status).toBe(200);
-    expect(html).toContain("Poster admin");
-    expect(html).toContain(brand.businessName);
+    expect(html).toContain("Sign up");
+    expect(html).toContain("Existing customer login");
+    expect(html).toContain('name="businessSlug"');
     expect(html).toContain('name="token"');
+    expect(html).not.toContain(`<option value="${brand.businessSlug}"`);
   });
 
   it("creates a scoped HttpOnly admin session and opens the dashboard", async () => {
@@ -508,6 +510,105 @@ describe("daily poster packet worker", () => {
     expect(referenceDashboard).toContain(
       "It controls layout, fonts, hierarchy, spacing, and visual treatment",
     );
+  });
+
+  it("shows logout and future tasks by default in the customer app", async () => {
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    await store.upsertCalendarEntry({
+      businessSlug: brand.businessSlug,
+      date: "2026-06-10",
+      topic: "Past task",
+      message: "Past message",
+      cta: null,
+      posterMode: "normal",
+      posterType: "general",
+      templateId: null,
+      inspirationImageUrl: null,
+      notes: null,
+      status: "planned",
+    });
+    await store.upsertCalendarEntry({
+      businessSlug: brand.businessSlug,
+      date: "2026-06-20",
+      topic: "Future task",
+      message: "Future message",
+      cta: null,
+      posterMode: "normal",
+      posterType: "general",
+      templateId: null,
+      inspirationImageUrl: null,
+      notes: null,
+      status: "planned",
+    });
+    await store.upsertGeneratedPoster({
+      businessSlug: brand.businessSlug,
+      posterType: "general",
+      date: "2026-06-20",
+      status: "ready",
+      contextUrl: "https://poster.example.com/daily-poster/context",
+      contextJsonUrl: "https://poster.example.com/daily-poster/context.json",
+      angle: "Future task",
+      briefJson: null,
+      prompt: null,
+      imageUrl: "https://poster.example.com/future-poster.png",
+      imageContentType: "image/png",
+      r2Key: null,
+      geminiTextModel: null,
+      geminiImageModel: null,
+      imageResolution: null,
+      aspectRatio: "9:16",
+      geminiJobName: null,
+      briefUsage: null,
+      imageUsage: null,
+      costBreakdown: null,
+      validationErrors: [],
+      failureReason: null,
+    });
+
+    const response = await app.request(
+      `/app/${brand.businessSlug}?month=2026-06`,
+      { headers: { Cookie: cookie } },
+      env,
+    );
+    const html = await response.text();
+    expect(response.status).toBe(200);
+    expect(html).toContain("Logout");
+    expect(html).toContain("Future tasks");
+    const taskSection =
+      html.split("<!-- VIEW: TASKS")[1]?.split("<!-- VIEW: INSPIRATION")[0] ??
+      "";
+    expect(taskSection).toContain("Future task");
+    expect(taskSection).not.toContain("Past message");
+    expect(taskSection).toContain("Preview poster");
+    expect(taskSection).toContain("Share poster");
+    expect(taskSection).toContain("Regenerate poster");
+    expect(taskSection).toContain("WhatsApp");
+    expect(taskSection).toContain("Facebook");
+
+    const allResponse = await app.request(
+      `/app/${brand.businessSlug}?month=2026-06&taskFilter=all`,
+      { headers: { Cookie: cookie } },
+      env,
+    );
+    const allHtml = await allResponse.text();
+    const allTaskSection =
+      allHtml
+        .split("<!-- VIEW: TASKS")[1]
+        ?.split("<!-- VIEW: INSPIRATION")[0] ?? "";
+    expect(allTaskSection).toContain("Future task");
+    expect(allTaskSection).toContain("Past message");
   });
 
   it("rejects an invalid dashboard token", async () => {
@@ -657,9 +758,11 @@ describe("daily poster packet worker", () => {
       env,
     );
     expect(planResponse.status).toBe(303);
-    expect(
-      await store.listCalendarEntries("glow-studio", { month: "2026-06" }),
-    ).not.toHaveLength(0);
+    const generatedEntries = await store.listCalendarEntries("glow-studio", {
+      month: "2026-06",
+    });
+    expect(generatedEntries).not.toHaveLength(0);
+    expect(generatedEntries.every((entry) => entry.date >= today)).toBe(true);
 
     const activateResponse = await app.request(
       "/onboarding/glow-studio/activate",

@@ -184,6 +184,13 @@ function normalizeMonth(value: string, fallbackDate: string): string {
   return /^\d{4}-\d{2}$/.test(value) ? value : monthFromDate(fallbackDate);
 }
 
+function futureStartDateForMonth(month: string, today: string): string {
+  const currentMonth = monthFromDate(today);
+  if (month === currentMonth) return today;
+  if (month > currentMonth) return `${month}-01`;
+  return today;
+}
+
 function addDays(date: string, days: number): string {
   const next = new Date(`${date}T00:00:00.000Z`);
   next.setUTCDate(next.getUTCDate() + days);
@@ -205,6 +212,7 @@ function fallbackCalendarEntries(input: {
   frequency: string;
   style: string;
   notes: string;
+  startDate?: string;
 }): ContentCalendarEntry[] {
   const [year, monthNumber] = input.month.split("-").map(Number);
   const daysInMonth = new Date(year!, monthNumber!, 0).getDate();
@@ -220,6 +228,7 @@ function fallbackCalendarEntries(input: {
   const entries: ContentCalendarEntry[] = [];
   for (let index = 0; index < daysInMonth; index += 1) {
     const date = `${input.month}-${String(index + 1).padStart(2, "0")}`;
+    if (input.startDate && date < input.startDate) continue;
     const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
     if (input.frequency === "weekdays" && (weekday === 0 || weekday === 6)) {
       continue;
@@ -794,6 +803,7 @@ async function generateCalendarEntries(input: {
   frequency: string;
   style: string;
   notes: string;
+  startDate?: string;
 }): Promise<ContentCalendarEntry[]> {
   const apiKey = input.env.GEMINI_API_KEY?.trim();
   if (!apiKey) return fallbackCalendarEntries(input);
@@ -801,6 +811,7 @@ async function generateCalendarEntries(input: {
 
 Business: ${input.brandName}
 Month: ${input.month}
+Generate from date: ${input.startDate ?? "First valid date in the month"}
 Posting frequency: ${input.frequency}
 Content style: ${input.style}
 Important notes: ${input.notes || "None"}
@@ -812,6 +823,7 @@ Rules:
 - Keep each message short enough for a poster.
 - Do not invent prices, discounts, medical/legal/financial claims, awards, or exact event details.
 - Use offer only when the notes explicitly mention an offer; otherwise use general, awareness, festival, or anniversary.
+- Only include dates on or after the Generate from date.
 - For weekdays frequency, include only Monday to Friday.`;
   const model =
     input.env.GEMINI_TEXT_MODEL && isTextModel(input.env.GEMINI_TEXT_MODEL)
@@ -851,7 +863,8 @@ Rules:
       const posterType = String(entry.posterType ?? "general");
       if (
         !resolveDate(date, DEFAULT_TIMEZONE) ||
-        !date.startsWith(input.month)
+        !date.startsWith(input.month) ||
+        (input.startDate && date < input.startDate)
       ) {
         continue;
       }
@@ -1581,6 +1594,7 @@ app.post("/onboarding/:businessSlug/plan", async (c) => {
     frequency: formString(form, "frequency") || "daily",
     style: formString(form, "style") || "mixed",
     notes: formString(form, "notes"),
+    startDate: futureStartDateForMonth(month, today),
   });
   await Promise.all(entries.map((entry) => store.upsertCalendarEntry(entry)));
   return onboardingRedirect(c, businessSlug, "plan", {
@@ -1692,6 +1706,7 @@ app.get("/app/:businessSlug", async (c) => {
   const historyPosterType = c.req.query("historyPosterType") || "all";
   const historyStatus = c.req.query("historyStatus") || "all";
   const editDate = c.req.query("editDate") || undefined;
+  const taskFilter = c.req.query("taskFilter") || "future";
   const from = today;
   const to = addDays(today, 6);
   const [
@@ -1735,6 +1750,7 @@ app.get("/app/:businessSlug", async (c) => {
       historyPage: Number.isFinite(historyPage) ? historyPage : 1,
       historyPosterType,
       historyStatus,
+      taskFilter,
       editDate,
       message: c.req.query("message") || undefined,
       error: c.req.query("error") || undefined,
@@ -1856,6 +1872,7 @@ app.post("/app/:businessSlug/calendar/generate-month", async (c) => {
     frequency,
     style,
     notes,
+    startDate: futureStartDateForMonth(month, today),
   });
   await Promise.all(entries.map((entry) => store.upsertCalendarEntry(entry)));
   return customerRedirect(c, businessSlug, {
