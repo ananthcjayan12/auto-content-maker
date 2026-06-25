@@ -608,6 +608,7 @@ async function generatePosterImage(input: {
   brief: Record<string, unknown>;
   briefUsage: GeminiUsage | null;
   started: GeneratedPoster;
+  editSourceImageUrl?: string | null;
 }): Promise<GeneratedPoster> {
   const {
     env,
@@ -625,6 +626,7 @@ async function generatePosterImage(input: {
     brief,
     briefUsage,
     started,
+    editSourceImageUrl,
   } = input;
   const imageModel = generationSettings.imageModel;
   const referenceUrls = typeReference?.referenceImageUrls.length
@@ -636,7 +638,13 @@ async function generatePosterImage(input: {
     posterType === "review" && typeof brief.reviewScreenshotUrl === "string"
       ? brief.reviewScreenshotUrl
       : null;
-  const [logo, board, posterReferences, reviewScreenshot] = await Promise.all([
+  const [editSource, logo, board, posterReferences, reviewScreenshot] =
+    await Promise.all([
+      imageUrlToBase64({
+        url: editSourceImageUrl ?? null,
+        env,
+        publicBaseUrl: base,
+      }),
     imageUrlToBase64({ url: brand.logoUrl, env, publicBaseUrl: base }),
     imageUrlToBase64({
       url: brand.brandReferenceBoardUrl,
@@ -654,6 +662,7 @@ async function generatePosterImage(input: {
   const availableReferenceSlots = Math.max(
     0,
     capability.maxInputImages -
+      Number(Boolean(editSource)) -
       Number(Boolean(logo)) -
       Number(Boolean(board)) -
       Number(Boolean(reviewScreenshot)),
@@ -663,6 +672,14 @@ async function generatePosterImage(input: {
     availableReferenceSlots,
   );
   const references: LabeledImageReference[] = [
+    editSource
+      ? {
+          ...editSource,
+          label: "Current generated poster to edit",
+          guidance:
+            "This is the existing poster image the user wants edited. Use it as the primary visual source, preserve the clinic identity, and apply only the requested user changes from the prompt.",
+        }
+      : null,
     reviewScreenshot
       ? {
           ...reviewScreenshot,
@@ -788,6 +805,7 @@ export async function generatePosterImageFromPrompt(input: {
   prompt: string;
   brief?: Record<string, unknown>;
   calendarEntry?: ContentCalendarEntry | null;
+  editSourceImageUrl?: string | null;
 }): Promise<GeneratedPoster> {
   const { env, store, businessSlug, posterType, dateOrToday, requestUrl } =
     input;
@@ -878,6 +896,7 @@ export async function generatePosterImageFromPrompt(input: {
     brief,
     briefUsage: started.briefUsage,
     started,
+    editSourceImageUrl: input.editSourceImageUrl,
   });
 }
 

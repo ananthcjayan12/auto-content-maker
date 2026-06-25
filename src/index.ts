@@ -934,6 +934,135 @@ app.post("/app/:businessSlug/calendar/generate-poster", async (c) => {
   }
 });
 
+app.post("/app/:businessSlug/calendar/edit-poster", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  const brand = await store.getBrand(businessSlug);
+  if (!brand) {
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  }
+  const form = await c.req.formData();
+  const resolvedDate = resolveDate(
+    formString(form, "date"),
+    c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE,
+  );
+  if (!resolvedDate) {
+    return customerRedirect(c, businessSlug, {
+      error: "Choose a valid date before editing a poster.",
+    });
+  }
+  const editInstruction = formString(form, "editInstruction").slice(0, 1200);
+  if (!editInstruction) {
+    return customerRedirect(c, businessSlug, {
+      month: monthFromDate(resolvedDate),
+      error: "Add an edit instruction before editing the poster image.",
+    });
+  }
+
+  const entry = await store.getCalendarEntry(businessSlug, resolvedDate);
+  const requestedPosterType = formString(form, "posterType");
+  const posterTypesToTry: PosterType[] = [
+    entry?.posterType,
+    isPosterType(requestedPosterType) ? requestedPosterType : null,
+    "general",
+    "awareness",
+    "reference",
+    "offer",
+    "festival",
+    "anniversary",
+    "review",
+  ].filter((value, index, values): value is PosterType =>
+    Boolean(value) && values.indexOf(value) === index,
+  );
+  const existingCandidates = await Promise.all(
+    posterTypesToTry.map(async (posterType) => ({
+      posterType,
+      poster: await store.getGeneratedPoster(
+        businessSlug,
+        posterType,
+        resolvedDate,
+      ),
+    })),
+  );
+  const existing = existingCandidates.find(
+    (candidate) =>
+      candidate.poster?.status === "ready" && candidate.poster.imageUrl,
+  );
+  if (!existing?.poster?.imageUrl) {
+    return customerRedirect(c, businessSlug, {
+      month: monthFromDate(resolvedDate),
+      error:
+        "Generate a poster for this date before using custom image edits.",
+    });
+  }
+
+  const brief: Record<string, unknown> = {
+    angle: entry?.topic ?? existing.poster.angle ?? "Edited poster",
+    contentSource: "user_image_edit",
+    calendarEntry: entry,
+    originalPosterUrl: existing.poster.imageUrl,
+    userEditInstruction: editInstruction,
+  };
+  const prompt = `EDIT EXISTING POSTER IMAGE
+
+Business: ${brand.businessName}
+Phone: ${brand.phone}
+Website: ${brand.websiteUrl ?? ""}
+Date: ${resolvedDate}
+
+Use the attached current generated poster as the source image. Apply the user's custom edit instruction while preserving the clinic's brand identity, logo usage, phone number, color theme, aspect ratio, and overall professional dental-clinic quality.
+
+User edit instruction:
+${editInstruction}
+
+Important rules:
+- Do not create an unrelated new poster.
+- Keep the same poster purpose unless the user explicitly asks to change it.
+- Preserve or improve legibility of all important text.
+- Do not invent prices, claims, offers, dates, patient outcomes, or medical promises.
+- Do not copy any competitor identity or external branding.
+- Return one finished 9:16 poster image.`;
+
+  try {
+    const poster = await generatePosterImageFromPrompt({
+      env: c.env,
+      store,
+      businessSlug,
+      posterType: existing.posterType,
+      dateOrToday: resolvedDate,
+      requestUrl: c.req.url,
+      prompt,
+      brief,
+      calendarEntry: entry,
+      editSourceImageUrl: existing.poster.imageUrl,
+    });
+    if (poster.status === "ready" && entry) {
+      await store.upsertCalendarEntry({ ...entry, status: "poster_ready" });
+    }
+    return customerRedirect(c, businessSlug, {
+      month: monthFromDate(resolvedDate),
+      message:
+        poster.status === "ready"
+          ? "Poster edited successfully."
+          : poster.failureReason || "Poster edit needs review.",
+    });
+  } catch (error) {
+    return customerRedirect(c, businessSlug, {
+      month: monthFromDate(resolvedDate),
+      error: error instanceof Error ? error.message : "Poster edit failed.",
+    });
+  }
+});
+
 app.post("/app/:businessSlug/templates/generate", async (c) => {
   const businessSlug = c.req.param("businessSlug");
   if (!(await hasAdminAccess(c, businessSlug))) {
