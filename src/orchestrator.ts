@@ -645,19 +645,19 @@ async function generatePosterImage(input: {
         env,
         publicBaseUrl: base,
       }),
-    imageUrlToBase64({ url: brand.logoUrl, env, publicBaseUrl: base }),
-    imageUrlToBase64({
-      url: brand.brandReferenceBoardUrl,
-      env,
-      publicBaseUrl: base,
-    }),
-    Promise.all(
-      referenceUrls.map((url) =>
-        imageUrlToBase64({ url, env, publicBaseUrl: base }),
+      imageUrlToBase64({ url: brand.logoUrl, env, publicBaseUrl: base }),
+      imageUrlToBase64({
+        url: brand.brandReferenceBoardUrl,
+        env,
+        publicBaseUrl: base,
+      }),
+      Promise.all(
+        referenceUrls.map((url) =>
+          imageUrlToBase64({ url, env, publicBaseUrl: base }),
+        ),
       ),
-    ),
-    imageUrlToBase64({ url: reviewScreenshotUrl, env, publicBaseUrl: base }),
-  ]);
+      imageUrlToBase64({ url: reviewScreenshotUrl, env, publicBaseUrl: base }),
+    ]);
   const capability = IMAGE_MODEL_CAPABILITIES[imageModel];
   const availableReferenceSlots = Math.max(
     0,
