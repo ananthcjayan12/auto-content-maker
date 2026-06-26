@@ -3014,6 +3014,20 @@ describe("daily poster packet worker", () => {
     expect(String(resendRequest?.[0])).toBe("https://api.resend.com/emails");
     const resendBody = JSON.parse(String(resendRequest?.[1]?.body));
     expect(resendBody.to).toEqual(["owner@example.com"]);
+    expect(resendBody.html).toContain("Request rework");
+    const reworkUrl = String(resendBody.html).match(
+      /https:\/\/poster\.example\.com\/app\/[^"]+poster-rework[^"]+/,
+    )?.[0];
+    expect(reworkUrl).toBeTruthy();
+    const reworkResponse = await app.request(
+      reworkUrl!.replaceAll("&amp;", "&"),
+      {},
+      env,
+    );
+    const reworkHtml = await reworkResponse.text();
+    expect(reworkResponse.status).toBe(200);
+    expect(reworkHtml).toContain("Request poster rework");
+    expect(reworkHtml).toContain("Correction notes");
     expect(resendBody.attachments[0]).toEqual({
       path: readyPoster.imageUrl,
       filename: `smile-craft-awareness-${today}.png`,

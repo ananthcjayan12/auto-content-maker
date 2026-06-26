@@ -101,6 +101,29 @@ return to the relevant screen instead of the dashboard:
 - brand-board saves return to `#brand`;
 - settings saves return to `#settings`.
 
+### Email rework flow
+
+Poster delivery emails now include the generated image, the full-size image
+link, and a signed **Request rework** button. The link opens:
+
+```text
+GET /app/:businessSlug/poster-rework
+POST /app/:businessSlug/poster-rework
+```
+
+The link does not require an admin session. It is protected by a stateless HMAC
+token containing business slug, poster type, date, language code, and expiry.
+The signing secret is `POSTER_REWORK_SECRET` when configured, otherwise it
+falls back to `POSTER_ADMIN_TOKEN`.
+
+The rework page shows the current poster and a correction-notes form. Submitting
+the form uses the current poster as the edit source, generates a reworked poster
+for the same date/type/language, and emails the updated poster again when email
+delivery settings are enabled.
+
+Email clients do not reliably support modals or scripted forms inside the email
+body, so the email uses a secure button to open the hosted rework form.
+
 Latest successful commands:
 
 ```bash

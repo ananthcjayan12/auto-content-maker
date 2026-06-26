@@ -21,6 +21,7 @@ import {
   isValidLocalTime,
   runAutomationHeartbeat,
   sendPosterEmail,
+  verifyPosterReworkToken,
 } from "./automation";
 import { applyDrPoojaSmileCraftPreset } from "./brand-presets";
 import {
@@ -219,6 +220,15 @@ function customerRedirect(
   );
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function runInBackground(
   c: Context<{ Bindings: Bindings }>,
   task: Promise<unknown>,
@@ -229,6 +239,58 @@ function runInBackground(
   } catch {
     void guarded;
   }
+}
+
+function renderPosterReworkPage(input: {
+  businessSlug: string;
+  posterType: PosterType;
+  date: string;
+  languageCode: string;
+  expires: string;
+  token: string;
+  imageUrl: string;
+  title: string;
+  error?: string;
+  message?: string;
+}): string {
+  const hidden = [
+    ["posterType", input.posterType],
+    ["date", input.date],
+    ["languageCode", input.languageCode],
+    ["expires", input.expires],
+    ["token", input.token],
+  ]
+    .map(
+      ([name, value]) =>
+        `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`,
+    )
+    .join("");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Poster rework</title><style>
+    body{margin:0;background:#f9fafb;color:#111827;font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif}
+    main{width:min(100% - 32px,760px);margin:32px auto 72px}
+    .card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:22px;box-shadow:0 8px 24px rgba(15,23,42,.06)}
+    img{display:block;width:min(100%,360px);height:auto;border-radius:12px;border:1px solid #e5e7eb;background:#fff}
+    textarea{width:100%;min-height:150px;border:1px solid #d1d5db;border-radius:10px;padding:12px;font:inherit;box-sizing:border-box}
+    button,.button{display:inline-flex;background:#111827;color:#fff;border:0;border-radius:8px;padding:11px 16px;font:inherit;font-weight:800;text-decoration:none;cursor:pointer}
+    .secondary{background:#f3f4f6;color:#111827;border:1px solid #e5e7eb}
+    .alert{padding:12px 14px;border-radius:8px;margin:0 0 16px;font-weight:700}
+    .error{background:#fee2e2;color:#b91c1c}.ok{background:#d1fae5;color:#047857}
+  </style></head><body><main><div class="card">
+    ${input.error ? `<div class="alert error">${escapeHtml(input.error)}</div>` : ""}
+    ${input.message ? `<div class="alert ok">${escapeHtml(input.message)}</div>` : ""}
+    <h1 style="margin:0 0 6px">Request poster rework</h1>
+    <p style="margin:0 0 18px;color:#4b5563">${escapeHtml(input.title)} · ${escapeHtml(input.date)} · ${escapeHtml(input.languageCode.toUpperCase())}</p>
+    <img src="${escapeHtml(input.imageUrl)}" alt="Generated poster">
+    <form method="post" action="/app/${escapeHtml(input.businessSlug)}/poster-rework" style="margin-top:20px">
+      ${hidden}
+      <label style="display:block;font-weight:800;margin:0 0 8px">Correction notes</label>
+      <textarea name="reworkNotes" required placeholder="Example: Keep the same branding, make the headline shorter, change CTA to Book appointment, and make the background softer."></textarea>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
+        <button type="submit">Generate reworked poster</button>
+        <a class="button secondary" href="${escapeHtml(input.imageUrl)}" target="_blank" rel="noopener">Open current poster</a>
+      </div>
+    </form>
+  </div></main></body></html>`;
 }
 
 async function deleteTaskAndGeneratedPosters(input: {
@@ -2286,6 +2348,231 @@ app.get("/app/:businessSlug/calendar/generation-status", async (c) => {
             : "processing",
     posters,
   });
+});
+
+app.get("/app/:businessSlug/poster-rework", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  const posterTypeValue = c.req.query("posterType") || "";
+  const dateValue = c.req.query("date") || "";
+  const languageCode = c.req.query("languageCode") || "en";
+  const expires = c.req.query("expires") || "";
+  const token = c.req.query("token") || "";
+  const resolvedDate = resolveDate(
+    dateValue,
+    c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE,
+  );
+  if (!isPosterType(posterTypeValue) || !resolvedDate) {
+    return c.html(
+      renderErrorPage(400, "Invalid rework link", "This poster rework link is invalid."),
+      400,
+    );
+  }
+  const valid = await verifyPosterReworkToken({
+    env: c.env,
+    businessSlug,
+    posterType: posterTypeValue,
+    date: resolvedDate,
+    languageCode,
+    expires,
+    token,
+  });
+  if (!valid) {
+    return c.html(
+      renderErrorPage(403, "Rework link expired", "Ask the team to send a fresh poster email."),
+      403,
+    );
+  }
+  const poster = await storeFor(c.env).getGeneratedPoster(
+    businessSlug,
+    posterTypeValue,
+    resolvedDate,
+    languageCode,
+  );
+  if (!poster?.imageUrl) {
+    return c.html(
+      renderErrorPage(404, "Poster unavailable", "The poster for this rework link is no longer available."),
+      404,
+    );
+  }
+  return c.html(
+    renderPosterReworkPage({
+      businessSlug,
+      posterType: posterTypeValue,
+      date: resolvedDate,
+      languageCode,
+      expires,
+      token,
+      imageUrl: poster.imageUrl,
+      title: poster.angle || poster.posterType,
+    }),
+  );
+});
+
+app.post("/app/:businessSlug/poster-rework", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  const form = await c.req.formData();
+  const posterTypeValue = formString(form, "posterType");
+  const resolvedDate = resolveDate(
+    formString(form, "date"),
+    c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE,
+  );
+  const languageCode = formString(form, "languageCode") || "en";
+  const expires = formString(form, "expires");
+  const token = formString(form, "token");
+  if (!isPosterType(posterTypeValue) || !resolvedDate) {
+    return c.html(
+      renderErrorPage(400, "Invalid rework request", "This poster rework request is invalid."),
+      400,
+    );
+  }
+  const valid = await verifyPosterReworkToken({
+    env: c.env,
+    businessSlug,
+    posterType: posterTypeValue,
+    date: resolvedDate,
+    languageCode,
+    expires,
+    token,
+  });
+  if (!valid) {
+    return c.html(
+      renderErrorPage(403, "Rework link expired", "Ask the team to send a fresh poster email."),
+      403,
+    );
+  }
+  const reworkNotes = formString(form, "reworkNotes").slice(0, 1200);
+  const store = storeFor(c.env);
+  const [brand, existing, entry, settings] = await Promise.all([
+    store.getBrand(businessSlug),
+    store.getGeneratedPoster(
+      businessSlug,
+      posterTypeValue,
+      resolvedDate,
+      languageCode,
+    ),
+    store.getCalendarEntry(businessSlug, resolvedDate),
+    store.getAutomationSettings(businessSlug),
+  ]);
+  if (!brand || !existing?.imageUrl) {
+    return c.html(
+      renderErrorPage(404, "Poster unavailable", "The poster for this rework link is no longer available."),
+      404,
+    );
+  }
+  if (!reworkNotes) {
+    return c.html(
+      renderPosterReworkPage({
+        businessSlug,
+        posterType: posterTypeValue,
+        date: resolvedDate,
+        languageCode,
+        expires,
+        token,
+        imageUrl: existing.imageUrl,
+        title: existing.angle || existing.posterType,
+        error: "Add correction notes before requesting a rework.",
+      }),
+      400,
+    );
+  }
+  const prompt = `REWORK EXISTING POSTER FROM EMAIL FEEDBACK
+
+Business: ${brand.businessName}
+Phone: ${brand.phone}
+Website: ${brand.websiteUrl ?? ""}
+Date: ${resolvedDate}
+Poster type: ${posterTypeValue}
+Poster language: ${existing.languageName ?? languageCode}
+
+Use the attached current generated poster as the source image. Apply only the correction notes from the user while preserving the business identity, logo, phone number, brand colors, aspect ratio, and factual safety.
+
+Correction notes:
+${reworkNotes}
+
+Rules:
+- Keep the same poster purpose unless the notes explicitly request a change.
+- Do not invent prices, claims, awards, medical outcomes, dates, or guarantees.
+- Do not copy competitor identity or external branding.
+- Return one finished 9:16 poster image.`;
+  try {
+    const updated = await generatePosterImageFromPrompt({
+      env: c.env,
+      store,
+      businessSlug,
+      posterType: posterTypeValue,
+      dateOrToday: resolvedDate,
+      requestUrl: c.req.url,
+      prompt,
+      brief: {
+        angle: existing.angle ?? entry?.topic ?? "Reworked poster",
+        contentSource: "email_rework",
+        userReworkNotes: reworkNotes,
+        originalPosterUrl: existing.imageUrl,
+        calendarEntry: entry,
+        language: {
+          code: languageCode,
+          name: existing.languageName ?? languageCode,
+        },
+      },
+      calendarEntry: entry,
+      editSourceImageUrl: existing.imageUrl,
+      languageCode,
+    });
+    if (updated.status !== "ready" || !updated.imageUrl) {
+      return c.html(
+        renderPosterReworkPage({
+          businessSlug,
+          posterType: posterTypeValue,
+          date: resolvedDate,
+          languageCode,
+          expires,
+          token,
+          imageUrl: existing.imageUrl,
+          title: existing.angle || existing.posterType,
+          error: updated.failureReason || "The reworked poster needs review.",
+        }),
+        500,
+      );
+    }
+    if (settings?.emailEnabled && settings.recipientEmails.length) {
+      await sendPosterEmail({
+        env: c.env,
+        settings,
+        poster: updated,
+        idempotencyKey: `poster-rework-${businessSlug}-${posterTypeValue}-${resolvedDate}-${languageCode}-${Date.now()}`,
+      });
+    }
+    return c.html(
+      renderPosterReworkPage({
+        businessSlug,
+        posterType: posterTypeValue,
+        date: resolvedDate,
+        languageCode,
+        expires,
+        token,
+        imageUrl: updated.imageUrl,
+        title: updated.angle || updated.posterType,
+        message: settings?.emailEnabled
+          ? "Reworked poster generated and emailed."
+          : "Reworked poster generated.",
+      }),
+    );
+  } catch (error) {
+    return c.html(
+      renderPosterReworkPage({
+        businessSlug,
+        posterType: posterTypeValue,
+        date: resolvedDate,
+        languageCode,
+        expires,
+        token,
+        imageUrl: existing.imageUrl,
+        title: existing.angle || existing.posterType,
+        error: error instanceof Error ? error.message : "Poster rework failed.",
+      }),
+      500,
+    );
+  }
 });
 
 app.post("/app/:businessSlug/calendar/edit-poster", async (c) => {
