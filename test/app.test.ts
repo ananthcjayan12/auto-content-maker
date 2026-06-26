@@ -859,11 +859,15 @@ describe("daily poster packet worker", () => {
       },
     );
     expect(regeneratedEntries).toHaveLength(2);
-    expect(regeneratedEntries.every((entry) => entry.status === "planned")).toBe(
-      true,
-    );
     expect(
-      await store.getGeneratedPoster(brand.businessSlug, "general", "2026-06-20"),
+      regeneratedEntries.every((entry) => entry.status === "planned"),
+    ).toBe(true);
+    expect(
+      await store.getGeneratedPoster(
+        brand.businessSlug,
+        "general",
+        "2026-06-20",
+      ),
     ).toEqual(beforePoster);
 
     const deleteAllResponse = await app.request(
@@ -882,7 +886,11 @@ describe("daily poster packet worker", () => {
       }),
     ).toHaveLength(0);
     expect(
-      await store.getGeneratedPoster(brand.businessSlug, "general", "2026-06-20"),
+      await store.getGeneratedPoster(
+        brand.businessSlug,
+        "general",
+        "2026-06-20",
+      ),
     ).toBeNull();
   });
 
@@ -967,12 +975,18 @@ describe("daily poster packet worker", () => {
 
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toContain("#edit-2026-06-23");
-    expect(await store.getCalendarEntry(brand.businessSlug, "2026-06-23")).toMatchObject({
+    expect(
+      await store.getCalendarEntry(brand.businessSlug, "2026-06-23"),
+    ).toMatchObject({
       topic: "Useful tip for customers",
       status: "planned",
     });
     expect(
-      await store.getGeneratedPoster(brand.businessSlug, "general", "2026-06-23"),
+      await store.getGeneratedPoster(
+        brand.businessSlug,
+        "general",
+        "2026-06-23",
+      ),
     ).toEqual(beforePoster);
   });
 
@@ -1049,9 +1063,15 @@ describe("daily poster packet worker", () => {
     );
 
     expect(response.status).toBe(303);
-    expect(await store.getCalendarEntry(brand.businessSlug, "2026-06-24")).toBeNull();
     expect(
-      await store.getGeneratedPoster(brand.businessSlug, "general", "2026-06-24"),
+      await store.getCalendarEntry(brand.businessSlug, "2026-06-24"),
+    ).toBeNull();
+    expect(
+      await store.getGeneratedPoster(
+        brand.businessSlug,
+        "general",
+        "2026-06-24",
+      ),
     ).toBeNull();
     expect(
       await store.getGeneratedPoster(

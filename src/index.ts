@@ -1906,7 +1906,8 @@ app.post("/app/:businessSlug/calendar/regenerate-content", async (c) => {
   const currentTopic = formString(form, "topic") || existing.topic;
   const currentMessage = formString(form, "message") || existing.message || "";
   const currentNotes = formString(form, "notes") || existing.notes || "";
-  const requestedPosterType = formString(form, "posterType") || existing.posterType;
+  const requestedPosterType =
+    formString(form, "posterType") || existing.posterType;
   const style =
     requestedPosterType === "offer"
       ? "promotional"
@@ -1987,7 +1988,10 @@ app.post("/app/:businessSlug/calendar/delete-all", async (c) => {
       }),
     ),
   );
-  const posterCount = deletedPosterCounts.reduce((sum, count) => sum + count, 0);
+  const posterCount = deletedPosterCounts.reduce(
+    (sum, count) => sum + count,
+    0,
+  );
   return customerRedirect(c, businessSlug, {
     _hash: "calendar",
     message: `${entries.length} task${entries.length === 1 ? "" : "s"} and ${posterCount} generated poster${posterCount === 1 ? "" : "s"} deleted.`,
@@ -2184,45 +2188,52 @@ app.post("/app/:businessSlug/calendar/generate-poster", async (c) => {
         requestUrl: c.req.url,
         force,
         calendarEntry: entry,
-      }).then(async (posters) => {
-        if (
-          entry &&
-          posters.length &&
-          posters.every((poster) => poster.status === "ready")
-        ) {
-          await store.upsertCalendarEntry({ ...entry, status: "poster_ready" });
-        }
-      }).catch(async (error) => {
-        const base = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
-        const contextUrl = `${base}/daily-poster/${businessSlug}/${posterType}/today`;
-        await store.upsertGeneratedPoster({
-          businessSlug,
-          posterType,
-          date: resolvedDate,
-          languageCode: "en",
-          languageName: "English",
-          status: "failed",
-          contextUrl,
-          contextJsonUrl: `${contextUrl}.json`,
-          angle: entry?.topic ?? null,
-          briefJson: null,
-          prompt: null,
-          imageUrl: null,
-          imageContentType: null,
-          r2Key: null,
-          geminiTextModel: null,
-          geminiImageModel: null,
-          imageResolution: null,
-          aspectRatio: null,
-          geminiJobName: null,
-          briefUsage: null,
-          imageUsage: null,
-          costBreakdown: null,
-          validationErrors: [],
-          failureReason:
-            error instanceof Error ? error.message : "Poster generation failed.",
-        });
-      }),
+      })
+        .then(async (posters) => {
+          if (
+            entry &&
+            posters.length &&
+            posters.every((poster) => poster.status === "ready")
+          ) {
+            await store.upsertCalendarEntry({
+              ...entry,
+              status: "poster_ready",
+            });
+          }
+        })
+        .catch(async (error) => {
+          const base = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
+          const contextUrl = `${base}/daily-poster/${businessSlug}/${posterType}/today`;
+          await store.upsertGeneratedPoster({
+            businessSlug,
+            posterType,
+            date: resolvedDate,
+            languageCode: "en",
+            languageName: "English",
+            status: "failed",
+            contextUrl,
+            contextJsonUrl: `${contextUrl}.json`,
+            angle: entry?.topic ?? null,
+            briefJson: null,
+            prompt: null,
+            imageUrl: null,
+            imageContentType: null,
+            r2Key: null,
+            geminiTextModel: null,
+            geminiImageModel: null,
+            imageResolution: null,
+            aspectRatio: null,
+            geminiJobName: null,
+            briefUsage: null,
+            imageUsage: null,
+            costBreakdown: null,
+            validationErrors: [],
+            failureReason:
+              error instanceof Error
+                ? error.message
+                : "Poster generation failed.",
+          });
+        }),
     );
     return customerRedirect(c, businessSlug, {
       _hash: "calendar",
@@ -2255,10 +2266,12 @@ app.get("/app/:businessSlug/calendar/generation-status", async (c) => {
   if (!resolvedDate || !isPosterType(posterTypeValue)) {
     return jsonError(c, 400, "Choose a valid date and poster type.");
   }
-  const posters = (await storeFor(c.env).listGeneratedPosters(businessSlug, {
-    posterType: posterTypeValue,
-    limit: 100,
-  })).filter((poster) => poster.date === resolvedDate);
+  const posters = (
+    await storeFor(c.env).listGeneratedPosters(businessSlug, {
+      posterType: posterTypeValue,
+      limit: 100,
+    })
+  ).filter((poster) => poster.date === resolvedDate);
   return c.json({
     success: true,
     date: resolvedDate,
@@ -2447,26 +2460,21 @@ function styleSheetToBrand(
     brandReferenceBoardUrl,
     typography: {
       headingStyle:
-        labeledValue(/typography|heading/i) ??
-        brand.typography.headingStyle,
+        labeledValue(/typography|heading/i) ?? brand.typography.headingStyle,
       bodyStyle:
-        labeledValue(/body|caption|paragraph/i) ??
-        brand.typography.bodyStyle,
+        labeledValue(/body|caption|paragraph/i) ?? brand.typography.bodyStyle,
       fontMood:
         labeledValue(/font mood|font|letter|type/i) ??
         brand.typography.fontMood,
     },
     visualStyle: {
       mood:
-        labeledValue(/mood|feel|tone/i) ||
-        fallback ||
-        brand.visualStyle.mood,
+        labeledValue(/mood|feel|tone/i) || fallback || brand.visualStyle.mood,
       layout:
         labeledValue(/layout|composition|spacing|grid/i) ??
         brand.visualStyle.layout,
       photoStyle:
-        labeledValue(/photo|image|lighting/i) ??
-        brand.visualStyle.photoStyle,
+        labeledValue(/photo|image|lighting/i) ?? brand.visualStyle.photoStyle,
       avoid: avoid.length ? avoid : brand.visualStyle.avoid,
     },
     defaultPosterRules: lines.length
@@ -2519,7 +2527,9 @@ Poster rules:`;
         "Content-Type": "application/json",
         "x-goog-api-key": apiKey,
       },
-      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }] }),
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+      }),
     },
   );
   if (!response.ok) return fallback;
@@ -2680,7 +2690,10 @@ app.post("/app/:businessSlug/brand/style-sheet/generate", async (c) => {
     });
   }
   const referenceCount = Math.min(
-    Math.max(Number.parseInt(formString(form, "brandReferenceCount") || "0", 10), 0),
+    Math.max(
+      Number.parseInt(formString(form, "brandReferenceCount") || "0", 10),
+      0,
+    ),
     10,
   );
   const taggedReferenceImages: Array<{

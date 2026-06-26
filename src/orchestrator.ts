@@ -1037,8 +1037,7 @@ export async function generatePosterImageFromPrompt(input: {
   const languageTarget =
     languageTargets.find(
       (target) => target.languageCode === input.languageCode,
-    ) ??
-    languageTargets[0]!;
+    ) ?? languageTargets[0]!;
   const languageBrand = brandForLanguage(brand, languageTarget);
   const [typeReference, calendarEntry] = await Promise.all([
     store.getTypeReference(businessSlug, posterType),

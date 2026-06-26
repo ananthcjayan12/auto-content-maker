@@ -200,8 +200,8 @@ src/store.ts
 Important orchestrator functions:
 
 ```ts
-runPosterOrchestrator()
-runPosterOrchestratorForLanguages()
+runPosterOrchestrator();
+runPosterOrchestratorForLanguages();
 ```
 
 `runPosterOrchestratorForLanguages()` fans out over every enabled language card
