@@ -2363,7 +2363,11 @@ app.get("/app/:businessSlug/poster-rework", async (c) => {
   );
   if (!isPosterType(posterTypeValue) || !resolvedDate) {
     return c.html(
-      renderErrorPage(400, "Invalid rework link", "This poster rework link is invalid."),
+      renderErrorPage(
+        400,
+        "Invalid rework link",
+        "This poster rework link is invalid.",
+      ),
       400,
     );
   }
@@ -2378,7 +2382,11 @@ app.get("/app/:businessSlug/poster-rework", async (c) => {
   });
   if (!valid) {
     return c.html(
-      renderErrorPage(403, "Rework link expired", "Ask the team to send a fresh poster email."),
+      renderErrorPage(
+        403,
+        "Rework link expired",
+        "Ask the team to send a fresh poster email.",
+      ),
       403,
     );
   }
@@ -2390,7 +2398,11 @@ app.get("/app/:businessSlug/poster-rework", async (c) => {
   );
   if (!poster?.imageUrl) {
     return c.html(
-      renderErrorPage(404, "Poster unavailable", "The poster for this rework link is no longer available."),
+      renderErrorPage(
+        404,
+        "Poster unavailable",
+        "The poster for this rework link is no longer available.",
+      ),
       404,
     );
   }
@@ -2421,7 +2433,11 @@ app.post("/app/:businessSlug/poster-rework", async (c) => {
   const token = formString(form, "token");
   if (!isPosterType(posterTypeValue) || !resolvedDate) {
     return c.html(
-      renderErrorPage(400, "Invalid rework request", "This poster rework request is invalid."),
+      renderErrorPage(
+        400,
+        "Invalid rework request",
+        "This poster rework request is invalid.",
+      ),
       400,
     );
   }
@@ -2436,7 +2452,11 @@ app.post("/app/:businessSlug/poster-rework", async (c) => {
   });
   if (!valid) {
     return c.html(
-      renderErrorPage(403, "Rework link expired", "Ask the team to send a fresh poster email."),
+      renderErrorPage(
+        403,
+        "Rework link expired",
+        "Ask the team to send a fresh poster email.",
+      ),
       403,
     );
   }
@@ -2455,7 +2475,11 @@ app.post("/app/:businessSlug/poster-rework", async (c) => {
   ]);
   if (!brand || !existing?.imageUrl) {
     return c.html(
-      renderErrorPage(404, "Poster unavailable", "The poster for this rework link is no longer available."),
+      renderErrorPage(
+        404,
+        "Poster unavailable",
+        "The poster for this rework link is no longer available.",
+      ),
       404,
     );
   }

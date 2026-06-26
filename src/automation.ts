@@ -77,9 +77,7 @@ function escapeHtml(value: string): string {
 
 function reworkSecret(env: Bindings): string | null {
   return (
-    env.POSTER_REWORK_SECRET?.trim() ||
-    env.POSTER_ADMIN_TOKEN?.trim() ||
-    null
+    env.POSTER_REWORK_SECRET?.trim() || env.POSTER_ADMIN_TOKEN?.trim() || null
   );
 }
 
@@ -141,7 +139,9 @@ export async function createPosterReworkUrl(input: {
   const publicBase = (input.baseUrl || input.env.PUBLIC_BASE_URL || "").trim();
   if (!secret || !publicBase) return null;
   const expires = String(
-    Math.floor(((input.now ?? new Date()).getTime() + 7 * 24 * 60 * 60 * 1000) / 1000),
+    Math.floor(
+      ((input.now ?? new Date()).getTime() + 7 * 24 * 60 * 60 * 1000) / 1000,
+    ),
   );
   const languageCode = input.poster.languageCode ?? "en";
   const payload = tokenPayload({
@@ -176,7 +176,10 @@ export async function verifyPosterReworkToken(input: {
 }): Promise<boolean> {
   const secret = reworkSecret(input.env);
   if (!secret || !input.token || !/^\d+$/.test(input.expires)) return false;
-  if (Number(input.expires) < Math.floor((input.now ?? new Date()).getTime() / 1000)) {
+  if (
+    Number(input.expires) <
+    Math.floor((input.now ?? new Date()).getTime() / 1000)
+  ) {
     return false;
   }
   const expected = await signReworkPayload(
