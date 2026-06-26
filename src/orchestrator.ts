@@ -29,9 +29,9 @@ import type {
   GeneratedPoster,
   ImageModelId,
   ImageResolution,
+  LanguageTypographyProfile,
   PosterStore,
   PosterPromptSettings,
-  PosterTemplatePattern,
   PosterType,
   PosterTypeReference,
 } from "./types";
@@ -41,6 +41,110 @@ export interface ImageBase64Reference {
   contentType: string;
   byteLength: number;
   base64: string;
+}
+
+interface PosterLanguageTarget {
+  languageCode: string;
+  languageName: string;
+  profile: LanguageTypographyProfile;
+}
+
+const LANGUAGE_CODE_OVERRIDES: Record<string, string> = {
+  english: "en",
+  malayalam: "ml",
+  hindi: "hi",
+  tamil: "ta",
+  arabic: "ar",
+  kannada: "kn",
+  telugu: "te",
+  bengali: "bn",
+  marathi: "mr",
+  gujarati: "gu",
+  punjabi: "pa",
+};
+
+function languageCodeFor(language: string): string {
+  const normalized = language.trim().toLowerCase();
+  const slug = normalized.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return (LANGUAGE_CODE_OVERRIDES[normalized] ?? slug) || "lang";
+}
+
+function enabledPosterLanguages(
+  brand: BusinessBrandSystem,
+): PosterLanguageTarget[] {
+  const settings = brand.languageTypography;
+  if (!settings?.enabled) {
+    return [
+      {
+        languageCode: "en",
+        languageName: "English",
+        profile: {
+          language: "English",
+          role: "primary",
+          referenceImageUrl: null,
+          styleProfile: null,
+          enabled: true,
+        },
+      },
+    ];
+  }
+  const profiles = settings.profiles?.length
+    ? settings.profiles
+    : [
+        {
+          language: settings.primaryLanguage,
+          role: "primary" as const,
+          referenceImageUrl: settings.typographyReferenceImageUrl,
+          styleProfile: settings.typographyStyleProfile,
+          enabled: true,
+        },
+        ...settings.additionalLanguages.map((language) => ({
+          language,
+          role: "secondary" as const,
+          referenceImageUrl: settings.typographyReferenceImageUrl,
+          styleProfile: settings.typographyStyleProfile,
+          enabled: true,
+        })),
+      ];
+  const seen = new Set<string>();
+  return profiles
+    .filter((profile) => profile.enabled !== false && profile.language.trim())
+    .map((profile) => ({
+      languageCode: languageCodeFor(profile.language),
+      languageName: profile.language.trim(),
+      profile,
+    }))
+    .filter((target) => {
+      if (seen.has(target.languageCode)) return false;
+      seen.add(target.languageCode);
+      return true;
+    });
+}
+
+function brandForLanguage(
+  brand: BusinessBrandSystem,
+  target: PosterLanguageTarget,
+): BusinessBrandSystem {
+  return {
+    ...brand,
+    languageTypography: {
+      enabled: true,
+      primaryLanguage: target.languageName,
+      additionalLanguages: [],
+      typographyReferenceImageUrl: target.profile.referenceImageUrl,
+      typographyStyleProfile: target.profile.styleProfile,
+      useReferenceForAllPosters:
+        brand.languageTypography?.useReferenceForAllPosters ?? true,
+      profiles: [
+        {
+          ...target.profile,
+          language: target.languageName,
+          role: "primary",
+          enabled: true,
+        },
+      ],
+    },
+  };
 }
 
 interface LabeledImageReference extends ImageBase64Reference {
@@ -464,8 +568,32 @@ function buildBriefPrompt(input: {
     : input.hasReferencePoster
       ? `\n\nSOURCE POSTER CONTENT FALLBACK\nA source poster is attached. Identify only its broad communication idea or poster purpose, then adapt that idea into safe dental-clinic copy for ${brand.businessName}. Do not copy exact wording, competitor identity, contact details, prices, offers, dates, claims, credentials, people, products, or unsupported treatment outcomes. Keep the result relevant to a dental clinic and concise enough for a mobile poster.`
       : "";
+  const languageTypography = brand.languageTypography;
+  const additionalLanguages = Array.isArray(
+    languageTypography?.additionalLanguages,
+  )
+    ? languageTypography.additionalLanguages
+    : [];
+  const enabledProfiles = (languageTypography?.profiles ?? []).filter(
+    (profile) => profile.enabled !== false,
+  );
+  const primaryProfile =
+    enabledProfiles.find((profile) => profile.role === "primary") ??
+    enabledProfiles[0] ??
+    null;
+  const languageInstruction = languageTypography?.enabled
+    ? `\n\nLANGUAGE LOCALIZATION\nWrite the visible poster copy for the primary poster language: ${primaryProfile?.language || languageTypography.primaryLanguage || "English"}. ${
+        additionalLanguages.length
+          ? `Keep these future language variants in mind for short, translatable phrasing: ${additionalLanguages.join(", ")}.`
+          : ""
+      } Use natural local phrasing, not literal translation. Keep headline, subheadline, and CTA short enough for a mobile poster.`
+    : "";
   return (
-    basePrompt + sourceInstruction + reviewInstruction + referenceInstruction
+    basePrompt +
+    sourceInstruction +
+    reviewInstruction +
+    referenceInstruction +
+    languageInstruction
   );
 }
 
@@ -543,7 +671,6 @@ export function buildImagePrompt(input: {
   brand: BusinessBrandSystem;
   posterType: PosterType;
   typeReference: PosterTypeReference | null;
-  templatePattern?: PosterTemplatePattern | null;
   date: string;
   brief: Record<string, unknown>;
   contextUrl: string;
@@ -556,7 +683,6 @@ export function buildImagePrompt(input: {
     brand,
     posterType,
     typeReference,
-    templatePattern,
     date,
     brief,
     runId,
@@ -570,22 +696,54 @@ export function buildImagePrompt(input: {
     referenceNotes: typeReference?.notes,
     posterTypePrompt: promptSettings.posterTypePrompts[posterType],
   });
+  const languageTypography = brand.languageTypography;
+  const additionalLanguages = Array.isArray(
+    languageTypography?.additionalLanguages,
+  )
+    ? languageTypography.additionalLanguages
+    : [];
+  const enabledProfiles = (languageTypography?.profiles ?? []).filter(
+    (profile) => profile.enabled !== false,
+  );
+  const primaryProfile =
+    enabledProfiles.find((profile) => profile.role === "primary") ??
+    enabledProfiles[0] ??
+    null;
+  const languageProfileSummary = enabledProfiles.length
+    ? enabledProfiles
+        .map(
+          (profile) =>
+            `${profile.role === "primary" ? "Primary" : "Extra"}: ${profile.language}${profile.styleProfile ? ` — ${profile.styleProfile}` : ""}${profile.referenceImageUrl ? " — reference image saved" : ""}`,
+        )
+        .join("\n")
+    : "";
+  const languageGuidance =
+    languageTypography?.enabled &&
+    (primaryProfile?.language ||
+      languageTypography.primaryLanguage ||
+      additionalLanguages.length ||
+      primaryProfile?.styleProfile ||
+      languageTypography.typographyStyleProfile)
+      ? `LANGUAGE & TYPOGRAPHY REFERENCE — COST-CONTROLLED AI-FIRST MODE
+- Primary poster language: ${primaryProfile?.language || languageTypography.primaryLanguage || "English"}.
+- Extra language variants to keep in mind for this business: ${
+          additionalLanguages.length
+            ? additionalLanguages.join(", ")
+            : "None configured"
+        }.
+- Saved language cards:
+${languageProfileSummary || "No per-language cards saved."}
+- Use the exact meaning from TODAY'S CONTENT, but localize phrasing naturally for the primary poster language. Avoid literal translation that becomes too long or awkward.
+- Keep visible text short enough for a mobile social poster. Prefer fewer, stronger words over dense copy.
+- Typography style profile: ${primaryProfile?.styleProfile || languageTypography.typographyStyleProfile || "Use the attached typography reference image as the lettering style guide."}
+- If a typography reference image is attached, match its lettering mood closely: stroke thickness, curves, spacing, weight, headline treatment, and script-native feel.
+- Do not switch to a generic font style. Do not distort glyphs. Do not invent unreadable or misspelled text.
+- If the target script is regional/Indic/Arabic, render it cleanly and naturally in that script.`
+      : "";
   const sections = [
     fillPromptTemplate(promptSettings.masterImagePromptTemplate, variables),
     fillPromptTemplate(promptSettings.posterTypePrompts[posterType], variables),
-    templatePattern
-      ? `SELECTED TEMPLATE PATTERN: ${templatePattern.name}
-Best for: ${templatePattern.bestFor}
-Description: ${templatePattern.description}
-
-Layout guidance:
-${templatePattern.layoutPrompt}
-
-Style guidance:
-${templatePattern.stylePrompt}
-
-Use this template as the dominant layout and visual pattern for this poster while preserving the business logo, contact details, brand colors, and safe factual content.`
-      : "",
+    languageGuidance,
     fillPromptTemplate(promptSettings.referencePromptTemplate, variables),
     ...(posterType === "reference" ? [REFERENCE_REMAKE_IMAGE_OVERRIDE] : []),
     ...(posterType === "review" && typeof brief.reviewScreenshotUrl === "string"
@@ -641,35 +799,59 @@ async function generatePosterImage(input: {
     editSourceImageUrl,
   } = input;
   const imageModel = generationSettings.imageModel;
-  const referenceUrls = typeReference?.referenceImageUrls.length
+  const typeReferenceUrls = typeReference?.referenceImageUrls.length
     ? typeReference.referenceImageUrls
     : typeReference?.productionReferenceImageUrl
       ? [typeReference.productionReferenceImageUrl]
       : [];
+  const referenceUrls = typeReferenceUrls;
   const reviewScreenshotUrl =
     posterType === "review" && typeof brief.reviewScreenshotUrl === "string"
       ? brief.reviewScreenshotUrl
       : null;
-  const [editSource, logo, board, posterReferences, reviewScreenshot] =
-    await Promise.all([
-      imageUrlToBase64({
-        url: editSourceImageUrl ?? null,
-        env,
-        publicBaseUrl: base,
-      }),
-      imageUrlToBase64({ url: brand.logoUrl, env, publicBaseUrl: base }),
-      imageUrlToBase64({
-        url: brand.brandReferenceBoardUrl,
-        env,
-        publicBaseUrl: base,
-      }),
-      Promise.all(
-        referenceUrls.map((url) =>
-          imageUrlToBase64({ url, env, publicBaseUrl: base }),
-        ),
+  const typographyReferenceUrl =
+    brand.languageTypography?.enabled &&
+    (brand.languageTypography.useReferenceForAllPosters ||
+      brand.languageTypography.typographyStyleProfile)
+      ? (brand.languageTypography.profiles?.find(
+          (profile) => profile.enabled !== false && profile.role === "primary",
+        )?.referenceImageUrl ??
+        brand.languageTypography.profiles?.find(
+          (profile) => profile.enabled !== false && profile.referenceImageUrl,
+        )?.referenceImageUrl ??
+        brand.languageTypography.typographyReferenceImageUrl)
+      : null;
+  const [
+    editSource,
+    logo,
+    board,
+    typographyReference,
+    posterReferences,
+    reviewScreenshot,
+  ] = await Promise.all([
+    imageUrlToBase64({
+      url: editSourceImageUrl ?? null,
+      env,
+      publicBaseUrl: base,
+    }),
+    imageUrlToBase64({ url: brand.logoUrl, env, publicBaseUrl: base }),
+    imageUrlToBase64({
+      url: brand.brandReferenceBoardUrl,
+      env,
+      publicBaseUrl: base,
+    }),
+    imageUrlToBase64({
+      url: typographyReferenceUrl,
+      env,
+      publicBaseUrl: base,
+    }),
+    Promise.all(
+      referenceUrls.map((url) =>
+        imageUrlToBase64({ url, env, publicBaseUrl: base }),
       ),
-      imageUrlToBase64({ url: reviewScreenshotUrl, env, publicBaseUrl: base }),
-    ]);
+    ),
+    imageUrlToBase64({ url: reviewScreenshotUrl, env, publicBaseUrl: base }),
+  ]);
   const capability = IMAGE_MODEL_CAPABILITIES[imageModel];
   const availableReferenceSlots = Math.max(
     0,
@@ -677,6 +859,7 @@ async function generatePosterImage(input: {
       Number(Boolean(editSource)) -
       Number(Boolean(logo)) -
       Number(Boolean(board)) -
+      Number(Boolean(typographyReference)) -
       Number(Boolean(reviewScreenshot)),
   );
   const styleReferenceLimit = Math.min(
@@ -716,6 +899,14 @@ async function generatePosterImage(input: {
             posterType === "reference"
               ? "Use this brand board only for the business color palette and identity. Ignore its typography, layout, spacing, composition, and image treatment."
               : "Attached brand board; follow the editable reference-image instructions in the prompt.",
+        }
+      : null,
+    typographyReference
+      ? {
+          ...typographyReference,
+          label: "Typography reference for multilingual poster text",
+          guidance:
+            "This image controls the desired lettering style for generated poster text. Match its script-native character shapes, weight, stroke contrast, curves, spacing, and headline treatment as closely as possible while keeping the new poster text readable and correctly spelled.",
         }
       : null,
     ...posterReferences
@@ -777,7 +968,8 @@ async function generatePosterImage(input: {
 
   const extension = imageExtension(image.mimeType);
   const runId = new Date().toISOString().replaceAll(/\D/g, "").slice(0, 17);
-  const r2Key = `businesses/${businessSlug}/generated/${posterType}/${date}-${runId}.${extension}`;
+  const languageCode = input.started.languageCode ?? "en";
+  const r2Key = `businesses/${businessSlug}/generated/${posterType}/${date}-${languageCode}-${runId}.${extension}`;
   await env.ASSETS!.put(r2Key, base64ToArrayBuffer(image.data), {
     httpMetadata: {
       contentType: image.mimeType,
@@ -818,6 +1010,7 @@ export async function generatePosterImageFromPrompt(input: {
   brief?: Record<string, unknown>;
   calendarEntry?: ContentCalendarEntry | null;
   editSourceImageUrl?: string | null;
+  languageCode?: string | null;
 }): Promise<GeneratedPoster> {
   const { env, store, businessSlug, posterType, dateOrToday, requestUrl } =
     input;
@@ -840,15 +1033,19 @@ export async function generatePosterImageFromPrompt(input: {
   );
   const brand = await store.getBrand(businessSlug);
   if (!brand) throw new Error("Business brand system not found.");
+  const languageTargets = enabledPosterLanguages(brand);
+  const languageTarget =
+    languageTargets.find(
+      (target) => target.languageCode === input.languageCode,
+    ) ??
+    languageTargets[0]!;
+  const languageBrand = brandForLanguage(brand, languageTarget);
   const [typeReference, calendarEntry] = await Promise.all([
     store.getTypeReference(businessSlug, posterType),
     input.calendarEntry === undefined
       ? store.getCalendarEntry(businessSlug, date)
       : Promise.resolve(input.calendarEntry),
   ]);
-  const templatePattern = calendarEntry?.templateId
-    ? await store.getTemplatePattern(businessSlug, calendarEntry.templateId)
-    : null;
   if (
     posterType === "reference" &&
     !calendarEntry?.inspirationImageUrl &&
@@ -862,11 +1059,14 @@ export async function generatePosterImageFromPrompt(input: {
     businessSlug,
     posterType,
     date,
+    languageTarget.languageCode,
   );
   const started = await store.upsertGeneratedPoster({
     businessSlug,
     posterType,
     date,
+    languageCode: languageTarget.languageCode,
+    languageName: languageTarget.languageName,
     status: "processing",
     contextUrl,
     contextJsonUrl,
@@ -895,7 +1095,7 @@ export async function generatePosterImageFromPrompt(input: {
   return generatePosterImage({
     env,
     store,
-    brand,
+    brand: languageBrand,
     businessSlug,
     posterType,
     date,
@@ -952,6 +1152,7 @@ export async function runPosterOrchestrator(input: {
   requestUrl: string;
   force?: boolean;
   calendarEntry?: ContentCalendarEntry | null;
+  languageTarget?: PosterLanguageTarget;
 }): Promise<GeneratedPoster> {
   const { env, store, businessSlug, posterType, dateOrToday, requestUrl } =
     input;
@@ -974,24 +1175,26 @@ export async function runPosterOrchestrator(input: {
   const imageModel = generationSettings.imageModel;
   const runId = new Date().toISOString().replaceAll(/\D/g, "").slice(0, 17);
 
+  const brand = await store.getBrand(businessSlug);
+  if (!brand) throw new Error("Business brand system not found.");
+  const languageTarget =
+    input.languageTarget ?? enabledPosterLanguages(brand)[0]!;
+  const languageBrand = brandForLanguage(brand, languageTarget);
+
   const existing = await store.getGeneratedPoster(
     businessSlug,
     posterType,
     date,
+    languageTarget.languageCode,
   );
   if (existing?.status === "ready" && !input.force) return existing;
 
-  const brand = await store.getBrand(businessSlug);
-  if (!brand) throw new Error("Business brand system not found.");
   const [typeReference, calendarEntry] = await Promise.all([
     store.getTypeReference(businessSlug, posterType),
     input.calendarEntry === undefined
       ? store.getCalendarEntry(businessSlug, date)
       : Promise.resolve(input.calendarEntry),
   ]);
-  const templatePattern = calendarEntry?.templateId
-    ? await store.getTemplatePattern(businessSlug, calendarEntry.templateId)
-    : null;
   if (
     posterType === "reference" &&
     !calendarEntry?.inspirationImageUrl &&
@@ -1006,6 +1209,8 @@ export async function runPosterOrchestrator(input: {
     businessSlug,
     posterType,
     date,
+    languageCode: languageTarget.languageCode,
+    languageName: languageTarget.languageName,
     status: "processing",
     contextUrl,
     contextJsonUrl,
@@ -1058,8 +1263,6 @@ export async function runPosterOrchestrator(input: {
           CTA: calendarEntry.cta ?? "",
           PosterMode: calendarEntry.posterMode,
           PosterType: calendarEntry.posterType,
-          TemplateName: templatePattern?.name ?? "",
-          TemplateDescription: templatePattern?.description ?? "",
           Notes: calendarEntry.notes ?? "",
         }
       : null;
@@ -1079,7 +1282,7 @@ export async function runPosterOrchestrator(input: {
     const briefResult = await generatePosterBrief({
       apiKey,
       model: textModel,
-      brand,
+      brand: languageBrand,
       posterType,
       typeReference,
       date,
@@ -1095,6 +1298,10 @@ export async function runPosterOrchestrator(input: {
     });
     const resolvedBrief: Record<string, unknown> = {
       ...briefResult.brief,
+      language: {
+        code: languageTarget.languageCode,
+        name: languageTarget.languageName,
+      },
       contentSource: calendarEntry
         ? "content_calendar"
         : (sheetLookup?.source ??
@@ -1107,10 +1314,9 @@ export async function runPosterOrchestrator(input: {
       ...(suppliedContent ? { sourceRow: suppliedContent } : {}),
     };
     const prompt = buildImagePrompt({
-      brand,
+      brand: languageBrand,
       posterType,
       typeReference,
-      templatePattern,
       date,
       brief: resolvedBrief,
       contextUrl,
@@ -1122,7 +1328,7 @@ export async function runPosterOrchestrator(input: {
     return generatePosterImage({
       env,
       store,
-      brand,
+      brand: languageBrand,
       businessSlug,
       posterType,
       date,
@@ -1136,6 +1342,8 @@ export async function runPosterOrchestrator(input: {
       briefUsage: briefResult.usage,
       started: {
         ...started,
+        languageCode: languageTarget.languageCode,
+        languageName: languageTarget.languageName,
         angle: String(resolvedBrief.angle ?? ""),
         briefJson: JSON.stringify(resolvedBrief),
         prompt,
@@ -1150,6 +1358,31 @@ export async function runPosterOrchestrator(input: {
         error instanceof Error ? error.message : "Poster orchestration failed.",
     });
   }
+}
+
+export async function runPosterOrchestratorForLanguages(input: {
+  env: Bindings;
+  store: PosterStore;
+  businessSlug: string;
+  posterType: PosterType;
+  dateOrToday: string;
+  requestUrl: string;
+  force?: boolean;
+  calendarEntry?: ContentCalendarEntry | null;
+}): Promise<GeneratedPoster[]> {
+  const brand = await input.store.getBrand(input.businessSlug);
+  if (!brand) throw new Error("Business brand system not found.");
+  const targets = enabledPosterLanguages(brand);
+  const results: GeneratedPoster[] = [];
+  for (const languageTarget of targets) {
+    results.push(
+      await runPosterOrchestrator({
+        ...input,
+        languageTarget,
+      }),
+    );
+  }
+  return results;
 }
 
 export function defaultScheduledTarget(env: Bindings): {

@@ -41,6 +41,24 @@ export interface VisualStyle {
   avoid: string[];
 }
 
+export interface LanguageTypographySettings {
+  enabled: boolean;
+  primaryLanguage: string;
+  additionalLanguages: string[];
+  typographyReferenceImageUrl: string | null;
+  typographyStyleProfile: string | null;
+  useReferenceForAllPosters: boolean;
+  profiles?: LanguageTypographyProfile[];
+}
+
+export interface LanguageTypographyProfile {
+  language: string;
+  role: "primary" | "secondary";
+  referenceImageUrl: string | null;
+  styleProfile: string | null;
+  enabled: boolean;
+}
+
 export interface BusinessBrandSystem {
   businessSlug: string;
   businessName: string;
@@ -52,6 +70,7 @@ export interface BusinessBrandSystem {
   typography: BrandTypography;
   visualStyle: VisualStyle;
   defaultPosterRules: string[];
+  languageTypography?: LanguageTypographySettings;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -214,6 +233,8 @@ export interface GeneratedPoster {
   businessSlug: string;
   posterType: PosterType;
   date: string;
+  languageCode?: string;
+  languageName?: string;
   status: GeneratedPosterStatus;
   contextUrl: string;
   contextJsonUrl: string;
@@ -310,12 +331,17 @@ export interface PosterStore {
     businessSlug: string,
     posterType: PosterType,
     date: string,
+    languageCode?: string,
   ): Promise<GeneratedPoster | null>;
   listGeneratedPosters(
     businessSlug: string,
     options?: { posterType?: PosterType; limit?: number },
   ): Promise<GeneratedPoster[]>;
   upsertGeneratedPoster(poster: GeneratedPoster): Promise<GeneratedPoster>;
+  deleteGeneratedPostersForDate(
+    businessSlug: string,
+    date: string,
+  ): Promise<GeneratedPoster[]>;
 }
 
 export interface Bindings {

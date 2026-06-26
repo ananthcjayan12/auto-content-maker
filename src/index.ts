@@ -43,6 +43,7 @@ import {
   generatePosterImageFromPrompt,
   imageUrlToBase64,
   runPosterOrchestrator,
+  runPosterOrchestratorForLanguages,
   buildImagePrompt,
 } from "./orchestrator";
 import type { ImageBase64Reference } from "./orchestrator";
@@ -58,7 +59,6 @@ import type {
   CalendarPosterMode,
   ContentCalendarEntry,
   GenerationSettings,
-  PosterTemplatePattern,
   PosterStore,
   PosterType,
 } from "./types";
@@ -146,6 +146,13 @@ function formStrings(form: FormData, name: string): string[] {
     .filter(Boolean);
 }
 
+function formCommaList(form: FormData, name: string): string[] {
+  return formString(form, name)
+    .split(/[\n,;]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 function parseJsonText(
   value: string,
 ): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
@@ -202,8 +209,48 @@ function customerRedirect(
   businessSlug: string,
   params: Record<string, string>,
 ) {
+  const hash = params._hash;
+  delete params._hash;
   const search = new URLSearchParams(params);
-  return c.redirect(`/app/${businessSlug}?${search.toString()}`, 303);
+  const query = search.toString();
+  return c.redirect(
+    `/app/${businessSlug}${query ? `?${query}` : ""}${hash ? `#${encodeURIComponent(hash)}` : ""}`,
+    303,
+  );
+}
+
+function runInBackground(
+  c: Context<{ Bindings: Bindings }>,
+  task: Promise<unknown>,
+) {
+  const guarded = task.catch((error) => console.error(error));
+  try {
+    c.executionCtx.waitUntil(guarded);
+  } catch {
+    void guarded;
+  }
+}
+
+async function deleteTaskAndGeneratedPosters(input: {
+  env: Bindings;
+  store: PosterStore;
+  businessSlug: string;
+  date: string;
+}): Promise<number> {
+  const deletedPosters = await input.store.deleteGeneratedPostersForDate(
+    input.businessSlug,
+    input.date,
+  );
+  await input.store.deleteCalendarEntry(input.businessSlug, input.date);
+  if (input.env.ASSETS) {
+    await Promise.all(
+      deletedPosters
+        .map((poster) => poster.r2Key)
+        .filter((key): key is string => Boolean(key))
+        .map((key) => input.env.ASSETS!.delete(key).catch(() => undefined)),
+    );
+  }
+  return deletedPosters.length;
 }
 
 function fallbackCalendarEntries(input: {
@@ -213,9 +260,14 @@ function fallbackCalendarEntries(input: {
   style: string;
   notes: string;
   startDate?: string;
+  endDate?: string;
 }): ContentCalendarEntry[] {
+  const startDate = input.startDate ?? `${input.month}-01`;
   const [year, monthNumber] = input.month.split("-").map(Number);
-  const daysInMonth = new Date(year!, monthNumber!, 0).getDate();
+  const fallbackEndDate = `${input.month}-${String(
+    new Date(year!, monthNumber!, 0).getDate(),
+  ).padStart(2, "0")}`;
+  const endDate = input.endDate ?? fallbackEndDate;
   const topics = [
     "Useful tip for customers",
     "Product or service awareness",
@@ -226,14 +278,14 @@ function fallbackCalendarEntries(input: {
     "Local festival or light engagement post",
   ];
   const entries: ContentCalendarEntry[] = [];
-  for (let index = 0; index < daysInMonth; index += 1) {
-    const date = `${input.month}-${String(index + 1).padStart(2, "0")}`;
-    if (input.startDate && date < input.startDate) continue;
+  let index = 0;
+  for (let date = startDate; date <= endDate; date = addDays(date, 1)) {
     const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
     if (input.frequency === "weekdays" && (weekday === 0 || weekday === 6)) {
       continue;
     }
     const topic = topics[index % topics.length]!;
+    index += 1;
     entries.push({
       businessSlug: input.businessSlug,
       date,
@@ -255,16 +307,6 @@ function fallbackCalendarEntries(input: {
     });
   }
   return entries;
-}
-
-function slugPart(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 36) || "template"
-  );
 }
 
 function businessSlugFromName(value: string): string {
@@ -394,67 +436,149 @@ function onboardingRedirect(
   return c.redirect(`/onboarding/${businessSlug}/${step}${suffix}`, 303);
 }
 
-function fallbackTemplatePatterns(input: {
+function base64ToArrayBuffer(value: string): ArrayBuffer {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
+}
+
+function imageExtension(contentType: string): string {
+  if (contentType.includes("jpeg")) return "jpg";
+  if (contentType.includes("webp")) return "webp";
+  return "png";
+}
+
+function imageFromGeminiResponse(
+  response: Record<string, unknown>,
+): { mimeType: string; data: string } | null {
+  const candidates = Array.isArray(response.candidates)
+    ? response.candidates
+    : [];
+  for (const candidate of candidates) {
+    const content =
+      typeof candidate === "object" && candidate && "content" in candidate
+        ? candidate.content
+        : null;
+    const parts =
+      typeof content === "object" &&
+      content &&
+      "parts" in content &&
+      Array.isArray(content.parts)
+        ? content.parts
+        : [];
+    for (const part of parts) {
+      const inlineData =
+        typeof part === "object" && part && "inlineData" in part
+          ? part.inlineData
+          : typeof part === "object" && part && "inline_data" in part
+            ? part.inline_data
+            : null;
+      if (
+        typeof inlineData === "object" &&
+        inlineData &&
+        "data" in inlineData &&
+        typeof inlineData.data === "string"
+      ) {
+        const mimeType =
+          "mimeType" in inlineData && typeof inlineData.mimeType === "string"
+            ? inlineData.mimeType
+            : "mime_type" in inlineData &&
+                typeof inlineData.mime_type === "string"
+              ? inlineData.mime_type
+              : "image/png";
+        return { mimeType, data: inlineData.data };
+      }
+    }
+  }
+  return null;
+}
+
+async function saveGeneratedImageAsset(input: {
+  env: Bindings;
+  publicBaseUrl: string;
+  keyPrefix: string;
+  image: { mimeType: string; data: string };
+}): Promise<string | null> {
+  if (!input.env.ASSETS) return null;
+  const extension = imageExtension(input.image.mimeType);
+  const key = `${input.keyPrefix}.${extension}`;
+  await input.env.ASSETS.put(key, base64ToArrayBuffer(input.image.data), {
+    httpMetadata: {
+      contentType: input.image.mimeType,
+      cacheControl: "public, max-age=31536000, immutable",
+    },
+  });
+  const assetOrigin =
+    input.env.R2_PUBLIC_BASE_URL?.trim().replace(/\/+$/, "") ||
+    input.publicBaseUrl.replace(/\/+$/, "");
+  return input.env.R2_PUBLIC_BASE_URL
+    ? `${assetOrigin}/${key}`
+    : `${assetOrigin}/assets/${key}`;
+}
+
+async function generateVisualReferenceImage(input: {
+  env: Bindings;
   businessSlug: string;
-  notes: string;
-  referenceImageUrl?: string | null;
-}): PosterTemplatePattern[] {
-  const base = [
+  publicBaseUrl: string;
+  keyPrefix: string;
+  prompt: string;
+  references: Array<{
+    label: string;
+    guidance: string;
+    image: ImageBase64Reference | null;
+  }>;
+}): Promise<string | null> {
+  const apiKey = input.env.GEMINI_API_KEY?.trim();
+  if (!apiKey || !input.env.ASSETS) return null;
+  const settings = defaultGenerationSettings(input.businessSlug, input.env);
+  const parts: Array<
+    { text: string } | { inline_data: { mime_type: string; data: string } }
+  > = [
     {
-      name: "Clean Educational Tip",
-      description:
-        "A premium, readable layout for useful tips and awareness posts.",
-      bestFor: "Tips, awareness, FAQs, simple educational content",
-      posterType: "awareness" as const,
-      layoutPrompt:
-        "Use a calm editorial layout with a strong headline at the top, one supporting line, generous whitespace, and one clear CTA near the bottom.",
-      stylePrompt:
-        "Keep the style modern, premium, uncluttered, brand-led, and readable on mobile. Use soft accents and avoid busy flyer elements.",
+      text: input.prompt,
     },
-    {
-      name: "Bold Promo Card",
-      description:
-        "A stronger commercial layout for confirmed offers and booking pushes.",
-      bestFor: "Offers, seasonal campaigns, booking reminders",
-      posterType: "offer" as const,
-      layoutPrompt:
-        "Use a large offer/message block, a clear service benefit, and a prominent CTA. Keep terms visually secondary but readable.",
-      stylePrompt:
-        "Make it energetic without looking cheap. Avoid excessive badges, fake urgency, and clutter.",
-    },
-    {
-      name: "Festival Greeting",
-      description:
-        "A warm greeting layout that keeps the business identity visible.",
-      bestFor: "Festivals, observances, local special days",
-      posterType: "festival" as const,
-      layoutPrompt:
-        "Use a greeting-led composition with a tasteful decorative area, business logo, short message, and subtle contact details.",
-      stylePrompt:
-        "Keep festival elements elegant and restrained. Do not overpower the brand palette.",
-    },
-    {
-      name: "Minimal Premium",
-      description:
-        "A sparse, high-end template for trust-building and brand posts.",
-      bestFor: "Brand reminders, trust posts, premium service messages",
-      posterType: "general" as const,
-      layoutPrompt:
-        "Use a minimal poster with one central message, strong alignment, plenty of whitespace, and restrained supporting text.",
-      stylePrompt:
-        "Use premium spacing, simple shapes, and confident typography. Avoid stocky flyer styling.",
-    },
+    ...input.references.flatMap((reference) =>
+      reference.image
+        ? [
+            {
+              text: `REFERENCE IMAGE: ${reference.label}. ${reference.guidance}`,
+            } as const,
+            {
+              inline_data: {
+                mime_type: reference.image.contentType,
+                data: reference.image.base64,
+              },
+            } as const,
+          ]
+        : [],
+    ),
   ];
-  return base.map((pattern, index) => ({
-    businessSlug: input.businessSlug,
-    templateId: `${slugPart(pattern.name)}-${Date.now()}-${index + 1}`,
-    ...pattern,
-    previewImageUrl: null,
-    referenceImageUrls: input.referenceImageUrl
-      ? [input.referenceImageUrl]
-      : [],
-    isActive: true,
-  }));
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(settings.imageModel)}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts }],
+      }),
+    },
+  );
+  if (!response.ok) return null;
+  const payload = (await response.json()) as Record<string, unknown>;
+  const image = imageFromGeminiResponse(payload);
+  if (!image) return null;
+  return saveGeneratedImageAsset({
+    env: input.env,
+    publicBaseUrl: input.publicBaseUrl,
+    keyPrefix: input.keyPrefix,
+    image,
+  });
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
@@ -657,144 +781,6 @@ Rules:
   };
 }
 
-async function generateTemplatePatterns(input: {
-  env: Bindings;
-  brand: BusinessBrandSystem;
-  notes: string;
-  referenceImageUrl?: string | null;
-  referenceImage?: ImageBase64Reference | null;
-}): Promise<PosterTemplatePattern[]> {
-  const apiKey = input.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) {
-    return fallbackTemplatePatterns({
-      businessSlug: input.brand.businessSlug,
-      notes: input.notes,
-      referenceImageUrl: input.referenceImageUrl,
-    });
-  }
-  const model =
-    input.env.GEMINI_TEXT_MODEL && isTextModel(input.env.GEMINI_TEXT_MODEL)
-      ? input.env.GEMINI_TEXT_MODEL
-      : DEFAULT_GENERATION_SETTINGS.textModel;
-  const referenceInstruction = input.referenceImage
-    ? `A reference poster image is attached. Use it only for broad layout structure, visual hierarchy, spacing rhythm, font feel, image/text placement, and composition patterns. Do not copy its brand name, logo, contact details, exact wording, claims, offers, illustrations, people, products, icons, or distinctive protected artwork.`
-    : `No reference poster image is attached. Create original reusable patterns that fit the business brand.`;
-  const prompt = `Create 5 reusable poster template pattern cards for a small business.
-
-Business: ${input.brand.businessName}
-Brand colors: primary ${input.brand.colors.primary}, secondary ${input.brand.colors.secondary}, accent ${input.brand.colors.accent}, dark text ${input.brand.colors.darkText}, muted text ${input.brand.colors.mutedText}
-Brand typography mood: ${input.brand.typography.headingStyle}; ${input.brand.typography.fontMood}
-Brand visual mood: ${input.brand.visualStyle.mood}
-User notes: ${input.notes || "Create a balanced set for education, promotion, festival, and premium brand posts."}
-Reference guidance: ${referenceInstruction}
-
-Return only JSON:
-{"templates":[{"name":"","description":"","bestFor":"","posterType":"general|awareness|offer|festival|anniversary","layoutPrompt":"","stylePrompt":""}]}
-
-Rules:
-- These are reusable visual/layout patterns, not daily content ideas.
-- Keep the final template brand-led: clinic logo, brand colors, and contact style must remain from this business.
-- If a reference image is attached, adapt only layout, hierarchy, spacing, and typography feel.
-- Do not create prompts that copy competitors or require exact copyrighted layouts, exact text, logos, people, claims, or contact details from the reference image.
-- Keep language understandable for a non-designer.
-- layoutPrompt should describe composition, hierarchy, spacing, and content placement.
-- stylePrompt should describe mood, typography feel, visual treatment, and what to avoid.`;
-  const parts: Array<
-    { text: string } | { inlineData: { mimeType: string; data: string } }
-  > = [{ text: prompt }];
-  if (input.referenceImage) {
-    parts.push({
-      inlineData: {
-        mimeType: input.referenceImage.contentType,
-        data: input.referenceImage.base64,
-      },
-    });
-  }
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-        generationConfig: { responseMimeType: "application/json" },
-      }),
-    },
-  );
-  if (!response.ok) {
-    return fallbackTemplatePatterns({
-      businessSlug: input.brand.businessSlug,
-      notes: input.notes,
-      referenceImageUrl: input.referenceImageUrl,
-    });
-  }
-  const payload = (await response.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  const text =
-    payload.candidates
-      ?.flatMap((candidate) => candidate.content?.parts ?? [])
-      .map((part) => part.text ?? "")
-      .join("\n")
-      .trim() ?? "";
-  try {
-    const parsed = JSON.parse(text) as {
-      templates?: Array<Record<string, unknown>>;
-    };
-    const templates = (parsed.templates ?? [])
-      .slice(0, 6)
-      .map((template, index) => {
-        const name =
-          String(template.name ?? "").slice(0, 80) || `Template ${index + 1}`;
-        const posterType = String(template.posterType ?? "general");
-        return {
-          businessSlug: input.brand.businessSlug,
-          templateId: `${slugPart(name)}-${Date.now()}-${index + 1}`,
-          name,
-          description:
-            String(template.description ?? "").slice(0, 220) ||
-            "Reusable poster layout pattern.",
-          bestFor:
-            String(template.bestFor ?? "").slice(0, 180) ||
-            "General business posters",
-          posterType:
-            isPosterType(posterType) &&
-            posterType !== "review" &&
-            posterType !== "reference"
-              ? posterType
-              : "general",
-          layoutPrompt:
-            String(template.layoutPrompt ?? "").slice(0, 1200) ||
-            "Use a clean layout with clear hierarchy and mobile-readable text.",
-          stylePrompt:
-            String(template.stylePrompt ?? "").slice(0, 1200) ||
-            "Keep the design premium, brand-led, and uncluttered.",
-          previewImageUrl: null,
-          referenceImageUrls: input.referenceImageUrl
-            ? [input.referenceImageUrl]
-            : [],
-          isActive: true,
-        } satisfies PosterTemplatePattern;
-      });
-    return templates.length
-      ? templates
-      : fallbackTemplatePatterns({
-          businessSlug: input.brand.businessSlug,
-          notes: input.notes,
-          referenceImageUrl: input.referenceImageUrl,
-        });
-  } catch {
-    return fallbackTemplatePatterns({
-      businessSlug: input.brand.businessSlug,
-      notes: input.notes,
-      referenceImageUrl: input.referenceImageUrl,
-    });
-  }
-}
-
 async function generateCalendarEntries(input: {
   env: Bindings;
   brandName: string;
@@ -804,14 +790,26 @@ async function generateCalendarEntries(input: {
   style: string;
   notes: string;
   startDate?: string;
+  endDate?: string;
 }): Promise<ContentCalendarEntry[]> {
   const apiKey = input.env.GEMINI_API_KEY?.trim();
   if (!apiKey) return fallbackCalendarEntries(input);
-  const prompt = `Create a simple monthly social media content calendar for a small business.
+  const startDate = input.startDate ?? `${input.month}-01`;
+  const endDate =
+    input.endDate ??
+    `${input.month}-${String(
+      new Date(
+        Number(input.month.slice(0, 4)),
+        Number(input.month.slice(5, 7)),
+        0,
+      ).getDate(),
+    ).padStart(2, "0")}`;
+  const prompt = `Create a simple social media content calendar for a small business.
 
 Business: ${input.brandName}
 Month: ${input.month}
-Generate from date: ${input.startDate ?? "First valid date in the month"}
+Generate from date: ${startDate}
+Generate until date: ${endDate}
 Posting frequency: ${input.frequency}
 Content style: ${input.style}
 Important notes: ${input.notes || "None"}
@@ -824,6 +822,7 @@ Rules:
 - Do not invent prices, discounts, medical/legal/financial claims, awards, or exact event details.
 - Use offer only when the notes explicitly mention an offer; otherwise use general, awareness, festival, or anniversary.
 - Only include dates on or after the Generate from date.
+- Only include dates on or before the Generate until date.
 - For weekdays frequency, include only Monday to Friday.`;
   const model =
     input.env.GEMINI_TEXT_MODEL && isTextModel(input.env.GEMINI_TEXT_MODEL)
@@ -863,8 +862,8 @@ Rules:
       const posterType = String(entry.posterType ?? "general");
       if (
         !resolveDate(date, DEFAULT_TIMEZONE) ||
-        !date.startsWith(input.month) ||
-        (input.startDate && date < input.startDate)
+        date < startDate ||
+        date > endDate
       ) {
         continue;
       }
@@ -1281,18 +1280,6 @@ app.post("/onboarding/:businessSlug/brand", async (c) => {
       });
     }
     await store.upsertBrand(validated.value);
-    const patterns = fallbackTemplatePatterns({
-      businessSlug,
-      notes,
-      referenceImageUrl: validated.value.brandReferenceBoardUrl.startsWith(
-        "/onboarding-assets/",
-      )
-        ? null
-        : validated.value.brandReferenceBoardUrl,
-    });
-    await Promise.all(
-      patterns.map((pattern) => store.upsertTemplatePattern(pattern)),
-    );
     return onboardingRedirect(c, businessSlug, "sample", {
       message: "Brand style saved. Create the first sample now.",
     });
@@ -1713,9 +1700,8 @@ app.get("/app/:businessSlug", async (c) => {
     calendarEntries,
     nextEntries,
     todayEntry,
-    todayPoster,
+    todayPosterCandidate,
     recentPosters,
-    templatePatterns,
   ] = await Promise.all([
     store.listCalendarEntries(businessSlug, { month }),
     store.listCalendarEntries(businessSlug, { from, to }),
@@ -1729,8 +1715,13 @@ app.get("/app/:businessSlug", async (c) => {
           (await store.getGeneratedPoster(businessSlug, "reference", today)),
       ),
     store.listGeneratedPosters(businessSlug, { limit: 100 }),
-    store.listTemplatePatterns(businessSlug),
   ]);
+  const todayPoster =
+    todayPosterCandidate ??
+    recentPosters.find(
+      (poster) => poster.date === today && poster.status === "ready",
+    ) ??
+    null;
   const automationSettings =
     (await store.getAutomationSettings(businessSlug)) ??
     defaultAutomationSettings(businessSlug);
@@ -1744,7 +1735,6 @@ app.get("/app/:businessSlug", async (c) => {
       todayEntry,
       todayPoster,
       recentPosters,
-      templatePatterns,
       automationSettings,
       calendarPage: Number.isFinite(calendarPage) ? calendarPage : 1,
       historyPage: Number.isFinite(historyPage) ? historyPage : 1,
@@ -1783,6 +1773,7 @@ app.post("/app/:businessSlug/calendar/save", async (c) => {
     );
     if (!resolvedDate) {
       return customerRedirect(c, businessSlug, {
+        _hash: "calendar",
         error: "Choose a valid calendar date.",
       });
     }
@@ -1795,6 +1786,7 @@ app.post("/app/:businessSlug/calendar/save", async (c) => {
       !isPosterType(posterTypeValue)
     ) {
       return customerRedirect(c, businessSlug, {
+        _hash: `edit-${resolvedDate}`,
         month: monthFromDate(resolvedDate),
         error: "Calendar item has an invalid mode, status, or poster type.",
       });
@@ -1813,6 +1805,7 @@ app.post("/app/:businessSlug/calendar/save", async (c) => {
     const topic = formString(form, "topic");
     if (!topic) {
       return customerRedirect(c, businessSlug, {
+        _hash: `edit-${resolvedDate}`,
         month: monthFromDate(resolvedDate),
         error: "Add a topic before saving the calendar item.",
       });
@@ -1826,20 +1819,179 @@ app.post("/app/:businessSlug/calendar/save", async (c) => {
       posterMode: posterModeValue,
       posterType:
         posterModeValue === "inspiration" ? "reference" : posterTypeValue,
-      templateId: formString(form, "templateId") || null,
+      templateId: null,
       inspirationImageUrl,
       notes: formString(form, "notes") || null,
       status: statusValue,
     });
     return customerRedirect(c, businessSlug, {
+      _hash: `edit-${resolvedDate}`,
       month: monthFromDate(resolvedDate),
       message: "Calendar item saved.",
     });
   } catch (error) {
     return customerRedirect(c, businessSlug, {
+      _hash: "calendar",
       error: error instanceof Error ? error.message : "Calendar save failed.",
     });
   }
+});
+
+app.post("/app/:businessSlug/calendar/delete", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const form = await c.req.formData();
+  const resolvedDate = resolveDate(
+    formString(form, "date"),
+    c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE,
+  );
+  if (!resolvedDate) {
+    return customerRedirect(c, businessSlug, {
+      _hash: "calendar",
+      error: "Choose a valid calendar date.",
+    });
+  }
+  const store = storeFor(c.env);
+  const posterCount = await deleteTaskAndGeneratedPosters({
+    env: c.env,
+    store,
+    businessSlug,
+    date: resolvedDate,
+  });
+  return customerRedirect(c, businessSlug, {
+    _hash: "calendar",
+    month: monthFromDate(resolvedDate),
+    message: `Task deleted${posterCount ? ` with ${posterCount} generated poster${posterCount === 1 ? "" : "s"}` : ""}.`,
+  });
+});
+
+app.post("/app/:businessSlug/calendar/regenerate-content", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  const brand = await store.getBrand(businessSlug);
+  if (!brand) {
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  }
+  const timezone = c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE;
+  const form = await c.req.formData();
+  const resolvedDate = resolveDate(formString(form, "date"), timezone);
+  if (!resolvedDate) {
+    return customerRedirect(c, businessSlug, {
+      _hash: "calendar",
+      error: "Choose a valid calendar date.",
+    });
+  }
+  const existing = await store.getCalendarEntry(businessSlug, resolvedDate);
+  if (!existing) {
+    return customerRedirect(c, businessSlug, {
+      _hash: `edit-${resolvedDate}`,
+      month: monthFromDate(resolvedDate),
+      error: "Save this task before regenerating its content.",
+    });
+  }
+  const currentTopic = formString(form, "topic") || existing.topic;
+  const currentMessage = formString(form, "message") || existing.message || "";
+  const currentNotes = formString(form, "notes") || existing.notes || "";
+  const requestedPosterType = formString(form, "posterType") || existing.posterType;
+  const style =
+    requestedPosterType === "offer"
+      ? "promotional"
+      : requestedPosterType === "awareness"
+        ? "educational"
+        : "mixed";
+  const entries = await generateCalendarEntries({
+    env: c.env,
+    brandName: brand.businessName,
+    businessSlug,
+    month: monthFromDate(resolvedDate),
+    frequency: "daily",
+    style,
+    notes: [
+      currentNotes,
+      `Create a fresh alternative for this date. Avoid repeating this current topic/message: ${currentTopic} ${currentMessage}`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    startDate: resolvedDate,
+    endDate: resolvedDate,
+  });
+  const regenerated = entries[0];
+  if (!regenerated) {
+    return customerRedirect(c, businessSlug, {
+      _hash: `edit-${resolvedDate}`,
+      month: monthFromDate(resolvedDate),
+      error: "Could not regenerate content for this task.",
+    });
+  }
+  const posterModeValue = formString(form, "posterMode") || existing.posterMode;
+  const posterMode = isCalendarPosterMode(posterModeValue)
+    ? posterModeValue
+    : existing.posterMode;
+  const nextPosterType =
+    posterMode === "inspiration"
+      ? "reference"
+      : regenerated.posterType === "review"
+        ? "general"
+        : regenerated.posterType;
+  await store.upsertCalendarEntry({
+    ...existing,
+    topic: regenerated.topic,
+    message: regenerated.message,
+    cta: regenerated.cta,
+    posterMode,
+    posterType: nextPosterType,
+    notes: currentNotes || regenerated.notes,
+    status: "planned",
+  });
+  return customerRedirect(c, businessSlug, {
+    _hash: `edit-${resolvedDate}`,
+    month: monthFromDate(resolvedDate),
+    message: "Task content regenerated. Poster images were not changed.",
+  });
+});
+
+app.post("/app/:businessSlug/calendar/delete-all", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  const entries = await store.listCalendarEntries(businessSlug, {
+    from: "0000-01-01",
+    to: "9999-12-31",
+  });
+  const deletedPosterCounts = await Promise.all(
+    entries.map((entry) =>
+      deleteTaskAndGeneratedPosters({
+        env: c.env,
+        store,
+        businessSlug,
+        date: entry.date,
+      }),
+    ),
+  );
+  const posterCount = deletedPosterCounts.reduce((sum, count) => sum + count, 0);
+  return customerRedirect(c, businessSlug, {
+    _hash: "calendar",
+    message: `${entries.length} task${entries.length === 1 ? "" : "s"} and ${posterCount} generated poster${posterCount === 1 ? "" : "s"} deleted.`,
+  });
 });
 
 app.post("/app/:businessSlug/calendar/generate-month", async (c) => {
@@ -1876,8 +2028,78 @@ app.post("/app/:businessSlug/calendar/generate-month", async (c) => {
   });
   await Promise.all(entries.map((entry) => store.upsertCalendarEntry(entry)));
   return customerRedirect(c, businessSlug, {
+    _hash: "calendar",
     month,
     message: `${entries.length} calendar ideas generated for ${month}.`,
+  });
+});
+
+app.post("/app/:businessSlug/calendar/generate-period", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return c.html(
+      renderErrorPage(403, "Forbidden", "Admin session required."),
+      403,
+    );
+  }
+  const store = storeFor(c.env);
+  const brand = await store.getBrand(businessSlug);
+  if (!brand) {
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
+  }
+  const timezone = c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE;
+  const today = todayInTimezone(timezone);
+  const form = await c.req.formData();
+  const fromDate = resolveDate(formString(form, "fromDate"), timezone);
+  const toDate = resolveDate(formString(form, "toDate"), timezone);
+  if (!fromDate || !toDate || fromDate > toDate) {
+    return customerRedirect(c, businessSlug, {
+      _hash: "calendar",
+      month: monthFromDate(fromDate ?? today),
+      error: "Choose a valid start and end date.",
+    });
+  }
+  const mode = formString(form, "mode") || "generate";
+  const existingEntries = await store.listCalendarEntries(businessSlug, {
+    from: fromDate,
+    to: toDate,
+  });
+  const existingDates = new Set(existingEntries.map((entry) => entry.date));
+  if (mode === "regenerate-existing" && existingDates.size === 0) {
+    return customerRedirect(c, businessSlug, {
+      _hash: "calendar",
+      month: monthFromDate(fromDate),
+      error: "No existing tasks found in that period.",
+    });
+  }
+  const entries = await generateCalendarEntries({
+    env: c.env,
+    brandName: brand.businessName,
+    businessSlug,
+    month: monthFromDate(fromDate),
+    frequency: formString(form, "frequency") || "daily",
+    style: formString(form, "style") || "mixed",
+    notes: formString(form, "notes"),
+    startDate: fromDate,
+    endDate: toDate,
+  });
+  const entriesToSave =
+    mode === "regenerate-existing"
+      ? entries.filter((entry) => existingDates.has(entry.date))
+      : entries;
+  await Promise.all(
+    entriesToSave.map((entry) => store.upsertCalendarEntry(entry)),
+  );
+  return customerRedirect(c, businessSlug, {
+    _hash: "calendar",
+    month: monthFromDate(fromDate),
+    message:
+      mode === "regenerate-existing"
+        ? `${entriesToSave.length} existing task content item${entriesToSave.length === 1 ? "" : "s"} regenerated. Posters were not changed.`
+        : `${entriesToSave.length} task content item${entriesToSave.length === 1 ? "" : "s"} generated for the selected period.`,
   });
 });
 
@@ -1898,6 +2120,7 @@ app.post("/app/:businessSlug/calendar/generate-poster", async (c) => {
   );
   if (!resolvedDate) {
     return customerRedirect(c, businessSlug, {
+      _hash: "calendar",
       error: "Choose a valid date before generating.",
     });
   }
@@ -1914,6 +2137,7 @@ app.post("/app/:businessSlug/calendar/generate-poster", async (c) => {
       !isPosterType(posterTypeValue)
     ) {
       return customerRedirect(c, businessSlug, {
+        _hash: `edit-${resolvedDate}`,
         month: monthFromDate(resolvedDate),
         error: "Calendar item has an invalid mode, status, or poster type.",
       });
@@ -1940,7 +2164,7 @@ app.post("/app/:businessSlug/calendar/generate-poster", async (c) => {
       posterMode: posterModeValue,
       posterType:
         posterModeValue === "inspiration" ? "reference" : posterTypeValue,
-      templateId: formString(form, "templateId") || null,
+      templateId: null,
       inspirationImageUrl,
       notes: formString(form, "notes") || null,
       status: statusValue,
@@ -1948,34 +2172,107 @@ app.post("/app/:businessSlug/calendar/generate-poster", async (c) => {
   }
   const posterType = entry?.posterType ?? "general";
   try {
-    const poster = await runPosterOrchestrator({
-      env: c.env,
-      store,
-      businessSlug,
-      posterType,
-      dateOrToday: resolvedDate,
-      requestUrl: c.req.url,
-      force: formString(form, "force") === "true",
-      calendarEntry: entry,
-    });
-    if (poster.status === "ready" && entry) {
-      await store.upsertCalendarEntry({ ...entry, status: "poster_ready" });
-    }
+    const force = formString(form, "force") === "true";
+    runInBackground(
+      c,
+      runPosterOrchestratorForLanguages({
+        env: c.env,
+        store,
+        businessSlug,
+        posterType,
+        dateOrToday: resolvedDate,
+        requestUrl: c.req.url,
+        force,
+        calendarEntry: entry,
+      }).then(async (posters) => {
+        if (
+          entry &&
+          posters.length &&
+          posters.every((poster) => poster.status === "ready")
+        ) {
+          await store.upsertCalendarEntry({ ...entry, status: "poster_ready" });
+        }
+      }).catch(async (error) => {
+        const base = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
+        const contextUrl = `${base}/daily-poster/${businessSlug}/${posterType}/today`;
+        await store.upsertGeneratedPoster({
+          businessSlug,
+          posterType,
+          date: resolvedDate,
+          languageCode: "en",
+          languageName: "English",
+          status: "failed",
+          contextUrl,
+          contextJsonUrl: `${contextUrl}.json`,
+          angle: entry?.topic ?? null,
+          briefJson: null,
+          prompt: null,
+          imageUrl: null,
+          imageContentType: null,
+          r2Key: null,
+          geminiTextModel: null,
+          geminiImageModel: null,
+          imageResolution: null,
+          aspectRatio: null,
+          geminiJobName: null,
+          briefUsage: null,
+          imageUsage: null,
+          costBreakdown: null,
+          validationErrors: [],
+          failureReason:
+            error instanceof Error ? error.message : "Poster generation failed.",
+        });
+      }),
+    );
     return customerRedirect(c, businessSlug, {
+      _hash: "calendar",
       month: monthFromDate(resolvedDate),
-      message:
-        poster.status === "ready"
-          ? "Poster generated successfully."
-          : poster.failureReason ||
-            "Poster generation started but needs review.",
+      date: resolvedDate,
+      posterType,
+      generation: "started",
+      message: "Poster generation started.",
     });
   } catch (error) {
     return customerRedirect(c, businessSlug, {
+      _hash: "calendar",
       month: monthFromDate(resolvedDate),
       error:
         error instanceof Error ? error.message : "Poster generation failed.",
     });
   }
+});
+
+app.get("/app/:businessSlug/calendar/generation-status", async (c) => {
+  const businessSlug = c.req.param("businessSlug");
+  if (!(await hasAdminAccess(c, businessSlug))) {
+    return jsonError(c, 403, "Admin session required.");
+  }
+  const resolvedDate = resolveDate(
+    c.req.query("date") || "",
+    c.env.BUSINESS_TIMEZONE || DEFAULT_TIMEZONE,
+  );
+  const posterTypeValue = c.req.query("posterType") || "general";
+  if (!resolvedDate || !isPosterType(posterTypeValue)) {
+    return jsonError(c, 400, "Choose a valid date and poster type.");
+  }
+  const posters = (await storeFor(c.env).listGeneratedPosters(businessSlug, {
+    posterType: posterTypeValue,
+    limit: 100,
+  })).filter((poster) => poster.date === resolvedDate);
+  return c.json({
+    success: true,
+    date: resolvedDate,
+    posterType: posterTypeValue,
+    status:
+      posters.length && posters.every((poster) => poster.status === "ready")
+        ? "ready"
+        : posters.some((poster) => poster.status === "failed")
+          ? "failed"
+          : posters.some((poster) => poster.status === "needs_review")
+            ? "needs_review"
+            : "processing",
+    posters,
+  });
 });
 
 app.post("/app/:businessSlug/calendar/edit-poster", async (c) => {
@@ -2001,12 +2298,14 @@ app.post("/app/:businessSlug/calendar/edit-poster", async (c) => {
   );
   if (!resolvedDate) {
     return customerRedirect(c, businessSlug, {
+      _hash: "calendar",
       error: "Choose a valid date before editing a poster.",
     });
   }
   const editInstruction = formString(form, "editInstruction").slice(0, 1200);
   if (!editInstruction) {
     return customerRedirect(c, businessSlug, {
+      _hash: `edit-${resolvedDate}`,
       month: monthFromDate(resolvedDate),
       error: "Add an edit instruction before editing the poster image.",
     });
@@ -2014,6 +2313,7 @@ app.post("/app/:businessSlug/calendar/edit-poster", async (c) => {
 
   const entry = await store.getCalendarEntry(businessSlug, resolvedDate);
   const requestedPosterType = formString(form, "posterType");
+  const requestedLanguageCode = formString(form, "languageCode") || null;
   const posterTypesToTry: PosterType[] = [
     entry?.posterType,
     isPosterType(requestedPosterType) ? requestedPosterType : null,
@@ -2028,22 +2328,27 @@ app.post("/app/:businessSlug/calendar/edit-poster", async (c) => {
     (value, index, values): value is PosterType =>
       Boolean(value) && values.indexOf(value) === index,
   );
-  const existingCandidates = await Promise.all(
-    posterTypesToTry.map(async (posterType) => ({
-      posterType,
-      poster: await store.getGeneratedPoster(
-        businessSlug,
-        posterType,
-        resolvedDate,
-      ),
-    })),
-  );
+  const generatedForBusiness = await store.listGeneratedPosters(businessSlug, {
+    limit: 100,
+  });
+  const existingCandidates = posterTypesToTry.map((posterType) => ({
+    posterType,
+    poster:
+      generatedForBusiness.find(
+        (poster) =>
+          poster.posterType === posterType &&
+          poster.date === resolvedDate &&
+          (!requestedLanguageCode ||
+            (poster.languageCode ?? "en") === requestedLanguageCode),
+      ) ?? null,
+  }));
   const existing = existingCandidates.find(
     (candidate) =>
       candidate.poster?.status === "ready" && candidate.poster.imageUrl,
   );
   if (!existing?.poster?.imageUrl) {
     return customerRedirect(c, businessSlug, {
+      _hash: `edit-${resolvedDate}`,
       month: monthFromDate(resolvedDate),
       error: "Generate a poster for this date before using custom image edits.",
     });
@@ -2055,6 +2360,10 @@ app.post("/app/:businessSlug/calendar/edit-poster", async (c) => {
     calendarEntry: entry,
     originalPosterUrl: existing.poster.imageUrl,
     userEditInstruction: editInstruction,
+    language: {
+      code: existing.poster.languageCode ?? "en",
+      name: existing.poster.languageName ?? "English",
+    },
   };
   const prompt = `EDIT EXISTING POSTER IMAGE
 
@@ -2062,6 +2371,7 @@ Business: ${brand.businessName}
 Phone: ${brand.phone}
 Website: ${brand.websiteUrl ?? ""}
 Date: ${resolvedDate}
+Poster language: ${existing.poster.languageName ?? existing.poster.languageCode ?? "English"}
 
 Use the attached current generated poster as the source image. Apply the user's custom edit instruction while preserving the clinic's brand identity, logo usage, phone number, color theme, aspect ratio, and overall professional dental-clinic quality.
 
@@ -2088,26 +2398,208 @@ Important rules:
       brief,
       calendarEntry: entry,
       editSourceImageUrl: existing.poster.imageUrl,
+      languageCode: existing.poster.languageCode ?? "en",
     });
     if (poster.status === "ready" && entry) {
       await store.upsertCalendarEntry({ ...entry, status: "poster_ready" });
     }
     return customerRedirect(c, businessSlug, {
+      _hash: "calendar",
       month: monthFromDate(resolvedDate),
       message:
         poster.status === "ready"
-          ? "Poster edited successfully."
+          ? `${existing.poster.languageName ?? "Language"} poster regenerated successfully.`
           : poster.failureReason || "Poster edit needs review.",
     });
   } catch (error) {
     return customerRedirect(c, businessSlug, {
+      _hash: "calendar",
       month: monthFromDate(resolvedDate),
       error: error instanceof Error ? error.message : "Poster edit failed.",
     });
   }
 });
 
-app.post("/app/:businessSlug/templates/generate", async (c) => {
+function styleSheetToBrand(
+  brand: BusinessBrandSystem,
+  text: string,
+  brandReferenceBoardUrl: string,
+): BusinessBrandSystem {
+  const rawLines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const lines = rawLines
+    .map((line) => line.replace(/^[A-Za-z ]+:\s*/, "").trim())
+    .filter(Boolean);
+  const labeledValue = (labelPattern: RegExp) => {
+    const raw = rawLines.find((line) => labelPattern.test(line));
+    return raw?.replace(/^[A-Za-z ]+:\s*/, "").trim() || null;
+  };
+  const fallback = lines.join(" ").slice(0, 500);
+  const avoid = rawLines
+    .filter((line) => /avoid|never|do not/i.test(line))
+    .map((line) => line.replace(/^[A-Za-z ]+:\s*/, "").trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  return {
+    ...brand,
+    brandReferenceBoardUrl,
+    typography: {
+      headingStyle:
+        labeledValue(/typography|heading/i) ??
+        brand.typography.headingStyle,
+      bodyStyle:
+        labeledValue(/body|caption|paragraph/i) ??
+        brand.typography.bodyStyle,
+      fontMood:
+        labeledValue(/font mood|font|letter|type/i) ??
+        brand.typography.fontMood,
+    },
+    visualStyle: {
+      mood:
+        labeledValue(/mood|feel|tone/i) ||
+        fallback ||
+        brand.visualStyle.mood,
+      layout:
+        labeledValue(/layout|composition|spacing|grid/i) ??
+        brand.visualStyle.layout,
+      photoStyle:
+        labeledValue(/photo|image|lighting/i) ??
+        brand.visualStyle.photoStyle,
+      avoid: avoid.length ? avoid : brand.visualStyle.avoid,
+    },
+    defaultPosterRules: lines.length
+      ? lines.slice(0, 10)
+      : brand.defaultPosterRules,
+  };
+}
+
+async function createAiStyleSheet(input: {
+  env: Bindings;
+  brand: BusinessBrandSystem;
+  userNotes: string;
+}): Promise<string> {
+  const fallback = `Typography: ${input.brand.typography.headingStyle}
+Body: ${input.brand.typography.bodyStyle}
+Font mood: ${input.brand.typography.fontMood}
+Mood: ${input.brand.visualStyle.mood}
+Layout: ${input.brand.visualStyle.layout}
+Photo style: ${input.brand.visualStyle.photoStyle}
+Avoid: ${input.brand.visualStyle.avoid.join(", ")}
+Poster rules: Use primary ${input.brand.colors.primary}, secondary ${input.brand.colors.secondary}, and accent ${input.brand.colors.accent}. Keep posters brand-led, readable on mobile, and faithful to the uploaded brand board.`;
+  const apiKey = input.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) return fallback;
+  const model =
+    input.env.GEMINI_TEXT_MODEL && isTextModel(input.env.GEMINI_TEXT_MODEL)
+      ? input.env.GEMINI_TEXT_MODEL
+      : DEFAULT_GENERATION_SETTINGS.textModel;
+  const prompt = `Create a practical brand style sheet for daily social poster generation.
+
+Business: ${input.brand.businessName}
+Colors: primary ${input.brand.colors.primary}, secondary ${input.brand.colors.secondary}, accent ${input.brand.colors.accent}, dark text ${input.brand.colors.darkText}, muted text ${input.brand.colors.mutedText}
+Existing typography: ${input.brand.typography.headingStyle}; ${input.brand.typography.bodyStyle}; ${input.brand.typography.fontMood}
+Existing visual style: ${input.brand.visualStyle.mood}; ${input.brand.visualStyle.layout}; ${input.brand.visualStyle.photoStyle}
+User notes: ${input.userNotes || "Create a concise, reusable style sheet."}
+
+Return only concise plain text with these labeled lines:
+Typography:
+Body:
+Font mood:
+Mood:
+Layout:
+Photo style:
+Avoid:
+Poster rules:`;
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }] }),
+    },
+  );
+  if (!response.ok) return fallback;
+  const payload = (await response.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  const text =
+    payload.candidates
+      ?.flatMap((candidate) => candidate.content?.parts ?? [])
+      .map((part) => part.text ?? "")
+      .join("\n")
+      .trim() ?? "";
+  return text || fallback;
+}
+
+async function generateBrandBoardImage(input: {
+  env: Bindings;
+  brand: BusinessBrandSystem;
+  styleSheet: string;
+  uploadedStyleSheetImage: ImageBase64Reference | null;
+  taggedReferenceImages?: Array<{
+    label: string;
+    image: ImageBase64Reference | null;
+  }>;
+  publicBaseUrl: string;
+}): Promise<string | null> {
+  const [logo, currentBoard] = await Promise.all([
+    imageUrlToBase64({
+      url: input.brand.logoUrl,
+      env: input.env,
+      publicBaseUrl: input.publicBaseUrl,
+    }),
+    imageUrlToBase64({
+      url: input.brand.brandReferenceBoardUrl,
+      env: input.env,
+      publicBaseUrl: input.publicBaseUrl,
+    }),
+  ]);
+  return generateVisualReferenceImage({
+    env: input.env,
+    businessSlug: input.brand.businessSlug,
+    publicBaseUrl: input.publicBaseUrl,
+    keyPrefix: `businesses/${input.brand.businessSlug}/brand/generated-style-board-${Date.now()}`,
+    references: [
+      {
+        label: "Business logo",
+        guidance:
+          "Use only as identity reference. Keep the logo intact and do not redesign it.",
+        image: logo,
+      },
+      {
+        label: "Existing brand board",
+        guidance:
+          "Use as existing brand direction. Improve clarity and make it useful as a persistent generation reference.",
+        image: currentBoard,
+      },
+      {
+        label: "Uploaded brand board or section reference",
+        guidance:
+          "Use as the customer's preferred brand-board or section reference. Do not copy protected external marks or text.",
+        image: input.uploadedStyleSheetImage,
+      },
+      ...(input.taggedReferenceImages ?? []).map((reference) => ({
+        label: `Customer reference: ${reference.label}`,
+        guidance: `Use this as a labeled brand-board input for ${reference.label}. Interpret what it contributes to colors, typography, photo style, icon style, texture, layout mood, or other brand-board sections. Do not copy protected external marks or text.`,
+        image: reference.image,
+      })),
+    ],
+    prompt: `Generate one clean brand style board image for future AI poster generation.
+
+Business: ${input.brand.businessName}
+Colors: primary ${input.brand.colors.primary}, secondary ${input.brand.colors.secondary}, accent ${input.brand.colors.accent}, dark text ${input.brand.colors.darkText}, muted text ${input.brand.colors.mutedText}
+Style sheet:
+${input.styleSheet}
+
+Create a polished visual brand board/mood board, not a daily poster. Include clear swatches, typography mood samples, spacing/layout cues, graphic treatment examples, and photo/style direction areas. If labeled customer reference images are attached, use each according to its label and make the resulting board organized into sensible sections. Keep it brand-safe and useful as an image reference for generating posters. Do not include fake offers, prices, patient claims, or competitor branding.`,
+  });
+}
+
+app.post("/app/:businessSlug/brand/style-sheet", async (c) => {
   const businessSlug = c.req.param("businessSlug");
   if (!(await hasAdminAccess(c, businessSlug))) {
     return c.html(
@@ -2124,65 +2616,36 @@ app.post("/app/:businessSlug/templates/generate", async (c) => {
     );
   }
   const form = await c.req.formData();
-  const referenceFile = form.get("referenceImage");
-  let referenceImageUrl: string | null = null;
-  if (isUploadedFile(referenceFile)) {
-    referenceImageUrl = await uploadImage({
+  let brandReferenceBoardUrl = brand.brandReferenceBoardUrl;
+  const styleSheetFile = form.get("styleSheetImage");
+  if (isUploadedFile(styleSheetFile)) {
+    brandReferenceBoardUrl = await uploadImage({
       env: c.env,
-      file: referenceFile,
-      keyPrefix: `businesses/${businessSlug}/templates/reference-${Date.now()}`,
+      file: styleSheetFile,
+      keyPrefix: `businesses/${businessSlug}/brand/style-sheet-${Date.now()}`,
       publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
     });
   }
-  const referenceImage = await imageUrlToBase64({
-    url: referenceImageUrl,
-    env: c.env,
-    publicBaseUrl: baseUrl(c.req.url, c.env.PUBLIC_BASE_URL),
-  });
-  const patterns = await generateTemplatePatterns({
-    env: c.env,
-    brand,
-    notes: formString(form, "notes"),
-    referenceImageUrl,
-    referenceImage,
-  });
-  await Promise.all(
-    patterns.map((pattern) => store.upsertTemplatePattern(pattern)),
-  );
-  return customerRedirect(c, businessSlug, {
-    message: `${patterns.length} template pattern ideas saved.`,
-  });
-});
-
-app.post("/app/:businessSlug/templates/toggle", async (c) => {
-  const businessSlug = c.req.param("businessSlug");
-  if (!(await hasAdminAccess(c, businessSlug))) {
-    return c.html(
-      renderErrorPage(403, "Forbidden", "Admin session required."),
-      403,
-    );
-  }
-  const form = await c.req.formData();
-  const templateId = formString(form, "templateId");
-  const pattern = await storeFor(c.env).getTemplatePattern(
+  const text = formString(form, "styleSheetText").slice(0, 2500);
+  const updatedBrand = validateBrand(
+    styleSheetToBrand(brand, text, brandReferenceBoardUrl),
     businessSlug,
-    templateId,
+    brand,
   );
-  if (!pattern) {
+  if (!updatedBrand.value) {
     return customerRedirect(c, businessSlug, {
-      error: "Template pattern not found.",
+      _hash: "brand",
+      error: updatedBrand.errors.join(" "),
     });
   }
-  await storeFor(c.env).upsertTemplatePattern({
-    ...pattern,
-    isActive: formString(form, "isActive") === "true",
-  });
+  await store.upsertBrand(updatedBrand.value);
   return customerRedirect(c, businessSlug, {
-    message: "Template pattern updated.",
+    _hash: "brand",
+    message: "Brand board saved.",
   });
 });
 
-app.post("/app/:businessSlug/templates/delete", async (c) => {
+app.post("/app/:businessSlug/brand/style-sheet/generate", async (c) => {
   const businessSlug = c.req.param("businessSlug");
   if (!(await hasAdminAccess(c, businessSlug))) {
     return c.html(
@@ -2190,13 +2653,90 @@ app.post("/app/:businessSlug/templates/delete", async (c) => {
       403,
     );
   }
-  const form = await c.req.formData();
-  const templateId = formString(form, "templateId");
-  if (templateId) {
-    await storeFor(c.env).deleteTemplatePattern(businessSlug, templateId);
+  const store = storeFor(c.env);
+  const brand = await store.getBrand(businessSlug);
+  if (!brand) {
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
+    );
   }
+  const form = await c.req.formData();
+  const publicBase = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
+  let brandReferenceBoardUrl = brand.brandReferenceBoardUrl;
+  const styleSheetFile = form.get("styleSheetImage");
+  let uploadedStyleSheetImage: ImageBase64Reference | null = null;
+  if (isUploadedFile(styleSheetFile)) {
+    brandReferenceBoardUrl = await uploadImage({
+      env: c.env,
+      file: styleSheetFile,
+      keyPrefix: `businesses/${businessSlug}/brand/style-sheet-${Date.now()}`,
+      publicBaseUrl: publicBase,
+    });
+    uploadedStyleSheetImage = await imageUrlToBase64({
+      url: brandReferenceBoardUrl,
+      env: c.env,
+      publicBaseUrl: publicBase,
+    });
+  }
+  const referenceCount = Math.min(
+    Math.max(Number.parseInt(formString(form, "brandReferenceCount") || "0", 10), 0),
+    10,
+  );
+  const taggedReferenceImages: Array<{
+    label: string;
+    image: ImageBase64Reference | null;
+  }> = [];
+  for (let index = 0; index < referenceCount; index += 1) {
+    const file = form.get(`brandReferenceImage_${index}`);
+    if (!isUploadedFile(file)) continue;
+    const label =
+      formString(form, `brandReferenceLabel_${index}`).slice(0, 80) ||
+      `reference image ${index + 1}`;
+    const url = await uploadImage({
+      env: c.env,
+      file,
+      keyPrefix: `businesses/${businessSlug}/brand/reference-${Date.now()}-${index + 1}`,
+      publicBaseUrl: publicBase,
+    });
+    taggedReferenceImages.push({
+      label,
+      image: await imageUrlToBase64({
+        url,
+        env: c.env,
+        publicBaseUrl: publicBase,
+      }),
+    });
+  }
+  const styleSheet = await createAiStyleSheet({
+    env: c.env,
+    brand,
+    userNotes: formString(form, "styleSheetText").slice(0, 1200),
+  });
+  const generatedBrandBoardUrl = await generateBrandBoardImage({
+    env: c.env,
+    brand,
+    styleSheet,
+    uploadedStyleSheetImage,
+    taggedReferenceImages,
+    publicBaseUrl: publicBase,
+  });
+  brandReferenceBoardUrl = generatedBrandBoardUrl ?? brandReferenceBoardUrl;
+  const updatedBrand = validateBrand(
+    styleSheetToBrand(brand, styleSheet, brandReferenceBoardUrl),
+    businessSlug,
+    brand,
+  );
+  if (!updatedBrand.value) {
+    return customerRedirect(c, businessSlug, {
+      _hash: "brand",
+      error: updatedBrand.errors.join(" "),
+    });
+  }
+  await store.upsertBrand(updatedBrand.value);
   return customerRedirect(c, businessSlug, {
-    message: "Template pattern deleted.",
+    _hash: "brand",
+    message: "Brand board created and saved.",
   });
 });
 
@@ -2206,6 +2746,14 @@ app.post("/app/:businessSlug/settings", async (c) => {
     return c.html(
       renderErrorPage(403, "Forbidden", "Admin session required."),
       403,
+    );
+  }
+  const store = storeFor(c.env);
+  const brand = await store.getBrand(businessSlug);
+  if (!brand) {
+    return c.html(
+      renderErrorPage(404, "Not found", "Business not found."),
+      404,
     );
   }
   const form = await c.req.formData();
@@ -2218,6 +2766,7 @@ app.post("/app/:businessSlug/settings", async (c) => {
     .filter(Boolean);
   if (!isValidLocalTime(localTime)) {
     return customerRedirect(c, businessSlug, {
+      _hash: "settings",
       error: "Choose a valid daily generation time.",
     });
   }
@@ -2225,11 +2774,13 @@ app.post("/app/:businessSlug/settings", async (c) => {
     recipientEmails.some((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
   ) {
     return customerRedirect(c, businessSlug, {
+      _hash: "settings",
       error: "Enter valid recipient email addresses.",
     });
   }
   if (emailEnabled && recipientEmails.length === 0) {
     return customerRedirect(c, businessSlug, {
+      _hash: "settings",
       error: "Add at least one delivery email before enabling email.",
     });
   }
@@ -2238,11 +2789,12 @@ app.post("/app/:businessSlug/settings", async (c) => {
     (!c.env.RESEND_API_KEY?.trim() || !c.env.POSTER_FROM_EMAIL?.trim())
   ) {
     return customerRedirect(c, businessSlug, {
+      _hash: "settings",
       error:
         "Email delivery is not configured yet. Add Resend settings before enabling email.",
     });
   }
-  await storeFor(c.env).upsertAutomationSettings({
+  await store.upsertAutomationSettings({
     businessSlug,
     enabled,
     localTime,
@@ -2251,7 +2803,79 @@ app.post("/app/:businessSlug/settings", async (c) => {
     emailEnabled,
     recipientEmails,
   });
+
+  const publicBase = baseUrl(c.req.url, c.env.PUBLIC_BASE_URL);
+  const languageCount = Math.min(
+    Math.max(Number.parseInt(formString(form, "languageCount") || "0", 10), 0),
+    12,
+  );
+  const languageProfiles = [];
+  for (let index = 0; index < languageCount; index += 1) {
+    const language = formString(form, `languageName_${index}`).slice(0, 80);
+    if (!language) continue;
+    const referenceFile = form.get(`languageReferenceImage_${index}`);
+    let referenceImageUrl =
+      formString(form, `existingLanguageReferenceImageUrl_${index}`) || null;
+    if (isUploadedFile(referenceFile)) {
+      referenceImageUrl = await uploadImage({
+        env: c.env,
+        file: referenceFile,
+        keyPrefix: `businesses/${businessSlug}/brand/typography-${language.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "language"}-${Date.now()}`,
+        publicBaseUrl: publicBase,
+      });
+    }
+    languageProfiles.push({
+      language,
+      role:
+        formString(form, `languageRole_${index}`) === "primary"
+          ? "primary"
+          : "secondary",
+      referenceImageUrl,
+      styleProfile: formString(form, `languageStyleProfile_${index}`) || null,
+      enabled: form.has(`languageEnabled_${index}`),
+    });
+  }
+  if (
+    languageProfiles.length &&
+    !languageProfiles.some((profile) => profile.role === "primary")
+  ) {
+    languageProfiles[0]!.role = "primary";
+  }
+  const primaryLanguageProfile =
+    languageProfiles.find((profile) => profile.role === "primary") ??
+    languageProfiles[0] ??
+    null;
+  const updatedBrand = validateBrand(
+    {
+      ...brand,
+      languageTypography: {
+        enabled: form.has("languageTypographyEnabled"),
+        primaryLanguage: primaryLanguageProfile?.language ?? "English",
+        additionalLanguages: languageProfiles
+          .filter(
+            (profile) =>
+              profile.language !== (primaryLanguageProfile?.language ?? ""),
+          )
+          .map((profile) => profile.language),
+        typographyReferenceImageUrl:
+          primaryLanguageProfile?.referenceImageUrl ?? null,
+        typographyStyleProfile: primaryLanguageProfile?.styleProfile ?? null,
+        useReferenceForAllPosters: form.has("useReferenceForAllPosters"),
+        profiles: languageProfiles,
+      },
+    },
+    businessSlug,
+    brand,
+  );
+  if (!updatedBrand.value) {
+    return customerRedirect(c, businessSlug, {
+      _hash: "settings",
+      error: updatedBrand.errors.join(" "),
+    });
+  }
+  await store.upsertBrand(updatedBrand.value);
   return customerRedirect(c, businessSlug, {
+    _hash: "settings",
     message: "Daily poster settings saved.",
   });
 });
@@ -3306,6 +3930,25 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
       : result.typeReference?.productionReferenceImageUrl
         ? [result.typeReference.productionReferenceImageUrl]
         : [];
+    const languageTypography = result.brand.languageTypography?.enabled
+      ? {
+          enabled: true,
+          primaryLanguage: result.brand.languageTypography.primaryLanguage,
+          additionalLanguages:
+            result.brand.languageTypography.additionalLanguages,
+          useReferenceForAllPosters:
+            result.brand.languageTypography.useReferenceForAllPosters,
+          profiles: (result.brand.languageTypography.profiles ?? []).filter(
+            (profile) => profile.enabled !== false,
+          ),
+        }
+      : {
+          enabled: false,
+          primaryLanguage: "English",
+          additionalLanguages: [],
+          useReferenceForAllPosters: false,
+          profiles: [],
+        };
     return c.json({
       business: {
         businessSlug: result.brand.businessSlug,
@@ -3321,6 +3964,7 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
       jsonUrl,
       generationSettings: result.generationSettings,
       posterReferenceImageUrls,
+      languageTypography,
     });
   }
   const logoBase64 = await imageUrlToBase64({
@@ -3347,6 +3991,47 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
       }),
     ),
   );
+  const languageProfiles =
+    result.brand.languageTypography?.enabled &&
+    result.brand.languageTypography.profiles?.length
+      ? result.brand.languageTypography.profiles.filter(
+          (profile) => profile.enabled !== false,
+        )
+      : result.brand.languageTypography?.enabled
+        ? [
+            {
+              language: result.brand.languageTypography.primaryLanguage,
+              role: "primary" as const,
+              referenceImageUrl:
+                result.brand.languageTypography.typographyReferenceImageUrl,
+              styleProfile:
+                result.brand.languageTypography.typographyStyleProfile,
+              enabled: true,
+            },
+            ...result.brand.languageTypography.additionalLanguages.map(
+              (language) => ({
+                language,
+                role: "secondary" as const,
+                referenceImageUrl:
+                  result.brand.languageTypography
+                    ?.typographyReferenceImageUrl ?? null,
+                styleProfile:
+                  result.brand.languageTypography?.typographyStyleProfile ??
+                  null,
+                enabled: true,
+              }),
+            ),
+          ]
+        : [];
+  const typographyReferencesBase64 = await Promise.all(
+    languageProfiles.map((profile) =>
+      imageUrlToBase64({
+        url: profile.referenceImageUrl,
+        env: c.env,
+        publicBaseUrl: base,
+      }),
+    ),
+  );
   return c.html(
     renderPosterPage({
       brand: result.brand,
@@ -3358,6 +4043,7 @@ app.get("/daily-poster/:businessSlug/:posterType/:dateOrToday", async (c) => {
         logo: logoBase64,
         brandReferenceBoard: brandReferenceBoardBase64,
         posterReferences: posterReferencesBase64,
+        typographyReferences: typographyReferencesBase64,
       },
     }),
   );
@@ -3602,7 +4288,7 @@ app.post(
       return jsonError(c, result.status, result.error);
     }
     const force = c.req.query("force") === "true";
-    const generatedPoster = await runPosterOrchestrator({
+    const generatedPosters = await runPosterOrchestratorForLanguages({
       env: c.env,
       store: storeFor(c.env),
       businessSlug: result.brand.businessSlug,
@@ -3611,11 +4297,16 @@ app.post(
       requestUrl: c.req.url,
       force,
     });
+    const generatedPoster =
+      generatedPosters.find((poster) => poster.status === "ready") ??
+      generatedPosters[0]!;
     return c.json({
-      success:
-        generatedPoster.status === "ready" ||
-        generatedPoster.status === "needs_review",
+      success: generatedPosters.some(
+        (poster) =>
+          poster.status === "ready" || poster.status === "needs_review",
+      ),
       generatedPoster,
+      generatedPosters,
     });
   },
 );

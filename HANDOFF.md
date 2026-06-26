@@ -1,8 +1,273 @@
 # Handoff: Daily Poster Packet
 
-Last updated: 2026-06-25  
+Last updated: 2026-06-26  
 Project path: `/Users/ananthu/Desktop/new_repos/auto-content-maker`  
 Project name: `daily-poster-packet`
+
+## 2026-06-26 brand-board-only generation, async customer generation, task deletion
+
+The customer app no longer exposes reusable template layout generation or
+selection. The active customer-facing creative source is now the saved brand
+board image plus optional inspiration/reference images for explicit inspiration
+poster tasks.
+
+### Brand board flow
+
+The **Brand** tab now focuses on:
+
+- current logo and brand board preview;
+- a single **Upload or edit brand board** flow;
+- direct brand board upload/edit;
+- optional AI update from the logo/colors/current board, custom user notes, and
+  multiple tagged reference images.
+
+When uploading AI references, users can tag each image with what it represents
+such as font sample, clinic interior, icon style, photo mood, packaging, or any
+other brand-board section. The generator sends these labels along with the
+images so Gemini can interpret each reference correctly.
+
+The AI-generated board is saved back to `brand.brandReferenceBoardUrl`. Poster
+generation sends the logo and brand board as the persistent visual identity
+references. Language/font reference images remain in Settings under
+**Languages & typography**, and each enabled language can still have its own
+optional font image and style profile.
+
+Legacy `poster_template_patterns` storage and `content_calendar_entries.template_id`
+remain in the schema for compatibility, but the active UI no longer reads them,
+new onboarding no longer seeds them, task saves force `templateId: null`, and
+the orchestrator no longer injects template layout prompts or template reference
+images into generation.
+
+### Async customer generation
+
+Customer task generation no longer keeps the browser waiting for the whole image
+pipeline. `POST /app/:businessSlug/calendar/generate-poster` now validates/saves
+the task, starts multilingual generation in the background with `waitUntil`, and
+redirects immediately with `generation=started`.
+
+The customer page polls:
+
+```text
+GET /app/:businessSlug/calendar/generation-status?date=YYYY-MM-DD&posterType=general
+```
+
+When all variants are ready, the page refreshes back to the Tasks view. In local
+tests, the background helper falls back gracefully when Cloudflare
+`ExecutionContext` is unavailable.
+
+### Task deletion
+
+Tasks can now be deleted from the task edit drawer:
+
+```text
+POST /app/:businessSlug/calendar/delete
+```
+
+Deleting a task removes the calendar entry for that date. Already generated
+poster rows for the same business/date are also deleted, across poster types
+and language variants. If a generated poster has an R2 key, the asset is deleted
+best-effort as part of the same cleanup.
+
+Each task row now also has a direct **Delete** button, so users do not need to
+open the edit drawer just to remove a task.
+
+The Tasks screen also has bulk/content controls:
+
+```text
+POST /app/:businessSlug/calendar/regenerate-content
+POST /app/:businessSlug/calendar/delete-all
+POST /app/:businessSlug/calendar/generate-period
+```
+
+`regenerate-content` refreshes one task's topic/message/CTA/poster type without
+changing existing generated poster images. The task returns to `planned` and the
+user lands back on that task drawer.
+
+`delete-all` removes every calendar task for the workspace and all generated
+poster rows/assets associated with those task dates.
+
+`generate-period` accepts `fromDate`, `toDate`, `frequency`, `style`, `notes`,
+and `mode`. `mode=generate` creates task content for the selected date range.
+`mode=regenerate-existing` refreshes content only for existing tasks in that
+range and does not regenerate or delete any poster images.
+
+### Stay-on-screen redirects
+
+Customer POST redirects now include tab/drawer fragments so saves and updates
+return to the relevant screen instead of the dashboard:
+
+- calendar saves/generation/deletion return to `#calendar` or the edited task
+  drawer;
+- brand-board saves return to `#brand`;
+- settings saves return to `#settings`.
+
+Latest successful commands:
+
+```bash
+npm run typecheck
+npm test
+```
+
+Latest result:
+
+```text
+43 tests passed
+```
+
+## 2026-06-26 multilingual poster generation and customer UI
+
+The app now supports AI-first multilingual poster generation using language
+cards and optional typography reference images.
+
+### Language and typography settings
+
+Customer Settings now has a card-based **Languages & typography** section.
+
+Each language card supports:
+
+- language name;
+- primary/extra role;
+- per-language typography reference image upload;
+- per-language AI font style profile;
+- enable/disable toggle.
+
+Users can add more language cards from the settings screen. Existing legacy
+language settings are normalized into cards automatically.
+
+Stored brand shape:
+
+```ts
+brand.languageTypography = {
+  enabled: boolean,
+  primaryLanguage: string,
+  additionalLanguages: string[],
+  typographyReferenceImageUrl: string | null,
+  typographyStyleProfile: string | null,
+  useReferenceForAllPosters: boolean,
+  profiles: [
+    {
+      language: string,
+      role: "primary" | "secondary",
+      referenceImageUrl: string | null,
+      styleProfile: string | null,
+      enabled: boolean
+    }
+  ]
+}
+```
+
+Relevant files:
+
+```text
+src/types.ts
+src/store.ts
+src/validation.ts
+src/customer-render.ts
+src/index.ts
+migrations/0015_language_typography_settings.sql
+```
+
+### Multilingual generation behavior
+
+Task/manual generation and automation now generate one poster per enabled
+language card.
+
+Generated posters are now keyed by:
+
+```text
+business_slug + poster_type + poster_date + language_code
+```
+
+This prevents Malayalam/Hindi/etc. variants from overwriting each other.
+Existing generated posters are migrated to `language_code = 'en'` and
+`language_name = 'English'`.
+
+Relevant migration:
+
+```text
+migrations/0016_generated_poster_language_variants.sql
+```
+
+Relevant generation files:
+
+```text
+src/orchestrator.ts
+src/automation.ts
+src/index.ts
+src/store.ts
+```
+
+Important orchestrator functions:
+
+```ts
+runPosterOrchestrator()
+runPosterOrchestratorForLanguages()
+```
+
+`runPosterOrchestratorForLanguages()` fans out over every enabled language card
+and returns all generated variants.
+
+### Task and dashboard variant UI
+
+The customer Tasks screen no longer collapses generated posters to the first
+variant.
+
+For each generated task, it now shows per-language actions:
+
+- language label;
+- preview icon;
+- Download link;
+- share menu;
+- Regenerate all.
+
+The main dashboard **Today’s Deliverable** preview now shows all ready language
+variants in a compact preview grid, and the dashboard action row shows
+language-specific download links such as:
+
+```text
+Download Malayalam
+Download Hindi
+```
+
+Relevant file:
+
+```text
+src/customer-render.ts
+```
+
+### Daily poster context
+
+The public `/daily-poster/:businessSlug/:posterType/today` HTML and JSON
+context now includes language typography guidance:
+
+- primary language;
+- additional languages;
+- language cards;
+- style profiles;
+- typography reference URLs;
+- typography reference base64 blocks on the HTML page.
+
+Relevant files:
+
+```text
+src/render.ts
+src/index.ts
+```
+
+### Latest verification
+
+Latest successful commands:
+
+```bash
+npm run typecheck
+npm test
+```
+
+Latest result:
+
+```text
+40 tests passed
+```
 
 ## 2026-06-25 onboarding, SaaS landing auth, and future-first tasks
 
@@ -184,7 +449,7 @@ npm test
 37 tests passed
 ```
 
-## 2026-06-24 simplified customer app, content calendar, and template patterns
+## 2026-06-24 simplified customer app and content calendar
 
 The product direction is now the simpler sellable flow:
 
@@ -202,7 +467,7 @@ The customer-facing app keeps the main workflow simple:
 - Dashboard / Today’s poster
 - Monthly content calendar
 - Inspiration poster creation
-- Brand & Templates
+- Brand board
 - Simple automation settings
 - Poster history
 
@@ -235,7 +500,6 @@ Each business/date can now have one planned content item with:
 - CTA
 - poster mode: `normal`, `exact_message`, or `inspiration`
 - poster type
-- optional template id
 - optional inspiration image URL
 - notes
 - status: `planned`, `poster_ready`, `needs_message`, or `skipped`
@@ -246,7 +510,6 @@ The customer calendar supports:
 - manually edit any date
 - upload an inspiration image for a date
 - generate a poster immediately for a date
-- select a saved poster style/template for a date
 
 If Gemini text generation is unavailable when generating the monthly calendar,
 the app falls back to a simple built-in monthly topic set.
@@ -257,7 +520,7 @@ The five-minute heartbeat still uses `poster_automation_settings`, but the
 daily run now checks `content_calendar_entries` first:
 
 1. If today’s calendar row is `skipped`, automation does nothing.
-2. If today has a calendar row, its `posterType`, message, mode, template, and
+2. If today has a calendar row, its `posterType`, message, mode, and
    inspiration image guide generation.
 3. If no calendar row exists, the older automation flow still runs from enabled
    poster types.
@@ -287,87 +550,16 @@ Safety rules still apply:
 - do not copy competitor logo, business name, contact details, exact wording,
   claims, offers, people, or misleading product imagery.
 
-### Brand & Templates
-
-Migration:
-
-```text
-migrations/0014_template_patterns.sql
-```
-
-New table:
-
-```text
-poster_template_patterns
-```
-
-Template patterns are reusable visual/style cards for a business. They store:
-
-- template id
-- name
-- description
-- best-for text
-- optional poster type
-- layout prompt
-- style prompt
-- optional preview image URL
-- optional reference image URLs
-- active/paused state
-
-The customer app’s **Brand & Templates** section shows:
-
-- current logo
-- current brand reference board
-- typography summary
-- visual mood/layout/photo-style summary
-- saved template pattern cards
-- link to the advanced admin brand editor
-
-Routes:
-
-```text
-POST /app/:businessSlug/templates/generate
-POST /app/:businessSlug/templates/toggle
-POST /app/:businessSlug/templates/delete
-```
-
-`templates/generate` asks Gemini for reusable template pattern cards. If Gemini
-is not configured or fails, it saves a built-in starter set:
-
-- Clean Educational Tip
-- Bold Promo Card
-- Festival Greeting
-- Minimal Premium
-
-Template patterns are intentionally visual/product-facing. The customer sees
-cards and simple names, not raw prompt editing.
-
-### Template-aware generation
-
-`content_calendar_entries.template_id` can point to a saved template pattern.
-
-When a poster is generated from a calendar entry with a selected template:
-
-- the template name/description are included in the content source metadata;
-- the template layout prompt and style prompt are injected into the image
-  prompt;
-- the selected template becomes the dominant layout/style direction;
-- brand logo, contact details, brand colors, and factual content remain
-  protected.
-
-If no template is selected, generation behaves as before.
-
 ### New/updated files
 
 - `src/customer-render.ts` — new simplified customer app UI.
-- `src/index.ts` — customer app routes, calendar routes, template routes,
-  login now redirects to `/app/:businessSlug`.
-- `src/types.ts` — `ContentCalendarEntry`, `PosterTemplatePattern`, template
-  fields on calendar entries.
-- `src/store.ts` — D1 persistence for content calendar and template patterns.
-- `src/orchestrator.ts` — calendar-aware and template-aware generation.
+- `src/index.ts` — customer app routes, calendar routes, login now redirects
+  to `/app/:businessSlug`.
+- `src/types.ts` — `ContentCalendarEntry` and calendar fields.
+- `src/store.ts` — D1 persistence for content calendar entries.
+- `src/orchestrator.ts` — calendar-aware generation.
 - `src/automation.ts` — heartbeat now uses today’s calendar row first.
-- `test/app.test.ts` — in-memory store updated for calendar/template methods.
+- `test/app.test.ts` — in-memory store updated for calendar methods.
 - `PRODUCT_USERFLOW_OPTIONS.md` — product/user-flow decision document.
 - `PRODUCT_GROWTH_PLAN.md` — simplified MVP/growth/pricing plan.
 

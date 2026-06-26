@@ -55,6 +55,7 @@ export function renderPosterPage(input: {
     logo: ImageBase64Reference;
     brandReferenceBoard: ImageBase64Reference;
     posterReferences: ImageBase64Reference[];
+    typographyReferences: ImageBase64Reference[];
   };
 }): string {
   const {
@@ -77,6 +78,33 @@ export function renderPosterPage(input: {
         ? [typeReference.productionReferenceImageUrl]
         : []
   ).map((url) => absoluteAssetUrl(url, publicPageUrl));
+  const languageProfiles =
+    brand.languageTypography?.enabled &&
+    brand.languageTypography.profiles?.length
+      ? brand.languageTypography.profiles.filter(
+          (profile) => profile.enabled !== false,
+        )
+      : brand.languageTypography?.enabled
+        ? [
+            {
+              language: brand.languageTypography.primaryLanguage,
+              role: "primary" as const,
+              referenceImageUrl:
+                brand.languageTypography.typographyReferenceImageUrl,
+              styleProfile: brand.languageTypography.typographyStyleProfile,
+              enabled: true,
+            },
+            ...brand.languageTypography.additionalLanguages.map((language) => ({
+              language,
+              role: "secondary" as const,
+              referenceImageUrl:
+                brand.languageTypography?.typographyReferenceImageUrl ?? null,
+              styleProfile:
+                brand.languageTypography?.typographyStyleProfile ?? null,
+              enabled: true,
+            })),
+          ]
+        : [];
 
   return `<!doctype html>
 <html lang="en">
@@ -177,6 +205,48 @@ export function renderPosterPage(input: {
                 )
                 .join("")
             : `<p class="warning" role="alert">Warning: No poster-type reference image is saved yet.</p>`
+        }
+      </section>
+
+      <section class="card wide" aria-labelledby="language-typography">
+        <h2 id="language-typography">4. Language & Typography Guidance</h2>
+        ${
+          brand.languageTypography?.enabled
+            ? `<p class="permanent">Use these saved language cards when creating daily poster content and typography.</p>
+              <dl>
+                ${field("Primary language", brand.languageTypography.primaryLanguage)}
+                ${field("Additional languages", brand.languageTypography.additionalLanguages.length ? brand.languageTypography.additionalLanguages.join(", ") : null)}
+                ${field("Use typography reference on every poster", brand.languageTypography.useReferenceForAllPosters ? "Yes" : "No")}
+              </dl>
+              ${
+                languageProfiles.length
+                  ? languageProfiles
+                      .map((profile, index) => {
+                        const referenceUrl = profile.referenceImageUrl
+                          ? absoluteAssetUrl(
+                              profile.referenceImageUrl,
+                              publicPageUrl,
+                            )
+                          : null;
+                        return `<h3>${escapeHtml(profile.role === "primary" ? "Primary" : "Extra")} language: ${escapeHtml(profile.language)}</h3>
+                          <dl>
+                            ${field("Style profile", profile.styleProfile)}
+                            <div class="field"><dt>Typography reference</dt><dd>${referenceUrl ? `<a href="${escapeHtml(referenceUrl)}">${escapeHtml(referenceUrl)}</a>` : '<span class="muted">Not specified</span>'}</dd></div>
+                          </dl>
+                          ${
+                            profile.referenceImageUrl
+                              ? imageBase64Block(
+                                  `${profile.language} typography reference image`,
+                                  imageBase64.typographyReferences[index] ??
+                                    null,
+                                )
+                              : ""
+                          }`;
+                      })
+                      .join("")
+                  : `<p class="warning" role="alert">Language typography is enabled, but no language cards are saved yet.</p>`
+              }`
+            : `<p class="muted">No language typography guidance is enabled for this brand.</p>`
         }
       </section>
     </div>

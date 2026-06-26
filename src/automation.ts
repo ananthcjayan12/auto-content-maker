@@ -1,5 +1,5 @@
 import { todayInTimezone } from "./date";
-import { runPosterOrchestrator } from "./orchestrator";
+import { runPosterOrchestratorForLanguages } from "./orchestrator";
 import type {
   AutomationRun,
   AutomationSettings,
@@ -177,7 +177,7 @@ export async function runAutomationHeartbeat(input: {
       error: null,
     };
     try {
-      const poster = await runPosterOrchestrator({
+      const posters = await runPosterOrchestratorForLanguages({
         env,
         store,
         businessSlug,
@@ -187,6 +187,13 @@ export async function runAutomationHeartbeat(input: {
         force: settings.forceGeneration,
         calendarEntry,
       });
+      const readyPosters = posters.filter(
+        (poster) => poster.status === "ready",
+      );
+      const poster =
+        readyPosters[0] ??
+        posters.find((item) => item.status === "needs_review") ??
+        posters[0]!;
       run = {
         ...run,
         status:

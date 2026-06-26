@@ -119,6 +119,47 @@ export function validateBrand(
   const visualInput = isObject(input.visualStyle)
     ? input.visualStyle
     : existing?.visualStyle;
+  const languageTypographyInput = isObject(input.languageTypography)
+    ? input.languageTypography
+    : existing?.languageTypography;
+  const rawLanguageProfiles =
+    isObject(languageTypographyInput) &&
+    Array.isArray(languageTypographyInput.profiles)
+      ? languageTypographyInput.profiles
+      : existing?.languageTypography?.profiles;
+  const languageProfiles = Array.isArray(rawLanguageProfiles)
+    ? rawLanguageProfiles
+        .filter((profile): profile is Record<string, unknown> =>
+          isObject(profile),
+        )
+        .map((profile, index) => ({
+          language:
+            typeof profile.language === "string" && profile.language.trim()
+              ? profile.language.trim().slice(0, 80)
+              : index === 0
+                ? "English"
+                : "",
+          role:
+            profile.role === "primary"
+              ? ("primary" as const)
+              : ("secondary" as const),
+          referenceImageUrl:
+            typeof profile.referenceImageUrl === "string"
+              ? profile.referenceImageUrl.trim() || null
+              : null,
+          styleProfile:
+            typeof profile.styleProfile === "string"
+              ? profile.styleProfile.trim().slice(0, 1600) || null
+              : null,
+          enabled: profile.enabled !== false,
+        }))
+        .filter((profile) => profile.language)
+        .slice(0, 8)
+    : [];
+  const primaryLanguageProfile =
+    languageProfiles.find((profile) => profile.role === "primary") ??
+    languageProfiles[0] ??
+    null;
 
   if (!colorsInput) errors.push("colors is required and must be an object");
   if (!typographyInput)
@@ -237,11 +278,78 @@ export function validateBrand(
       errors,
       existing?.defaultPosterRules,
     ),
+    languageTypography: {
+      enabled:
+        isObject(languageTypographyInput) &&
+        typeof languageTypographyInput.enabled === "boolean"
+          ? languageTypographyInput.enabled
+          : (existing?.languageTypography?.enabled ?? false),
+      primaryLanguage:
+        primaryLanguageProfile?.language ??
+        (isObject(languageTypographyInput) &&
+        typeof languageTypographyInput.primaryLanguage === "string" &&
+        languageTypographyInput.primaryLanguage.trim()
+          ? languageTypographyInput.primaryLanguage.trim().slice(0, 80)
+          : (existing?.languageTypography?.primaryLanguage ?? "English")),
+      additionalLanguages: languageProfiles.length
+        ? languageProfiles
+            .filter(
+              (profile) =>
+                profile.language !==
+                (primaryLanguageProfile?.language ?? "English"),
+            )
+            .map((profile) => profile.language)
+        : stringArray(
+            isObject(languageTypographyInput)
+              ? languageTypographyInput.additionalLanguages
+              : undefined,
+            "languageTypography.additionalLanguages",
+            errors,
+            existing?.languageTypography?.additionalLanguages ?? [],
+          )
+            .map((language) => language.slice(0, 80))
+            .slice(0, 8),
+      typographyReferenceImageUrl:
+        primaryLanguageProfile?.referenceImageUrl ??
+        (isObject(languageTypographyInput) &&
+        typeof languageTypographyInput.typographyReferenceImageUrl === "string"
+          ? languageTypographyInput.typographyReferenceImageUrl.trim() || null
+          : (existing?.languageTypography?.typographyReferenceImageUrl ??
+            null)),
+      typographyStyleProfile:
+        primaryLanguageProfile?.styleProfile ??
+        (isObject(languageTypographyInput) &&
+        typeof languageTypographyInput.typographyStyleProfile === "string"
+          ? languageTypographyInput.typographyStyleProfile
+              .trim()
+              .slice(0, 1600) || null
+          : (existing?.languageTypography?.typographyStyleProfile ?? null)),
+      useReferenceForAllPosters:
+        isObject(languageTypographyInput) &&
+        typeof languageTypographyInput.useReferenceForAllPosters === "boolean"
+          ? languageTypographyInput.useReferenceForAllPosters
+          : (existing?.languageTypography?.useReferenceForAllPosters ?? false),
+      profiles: languageProfiles,
+    },
   };
 
   if (!value.businessName) errors.push("businessName is required");
   if (!value.phone) errors.push("phone is required");
   validatePublicUrl(value.websiteUrl, "websiteUrl", errors);
+  validatePublicUrl(
+    value.languageTypography?.typographyReferenceImageUrl ?? null,
+    "languageTypography.typographyReferenceImageUrl",
+    errors,
+  );
+  for (const [index, profile] of (
+    value.languageTypography?.profiles ?? []
+  ).entries()) {
+    validatePublicUrl(
+      profile.referenceImageUrl,
+      `languageTypography.profiles.${index}.referenceImageUrl`,
+      errors,
+    );
+  }
 
   return errors.length ? { errors } : { errors, value };
 }
