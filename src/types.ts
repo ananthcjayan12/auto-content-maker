@@ -360,5 +360,6 @@ export interface Bindings {
   R2_PUBLIC_BASE_URL?: string;
   RESEND_API_KEY?: string;
   POSTER_FROM_EMAIL?: string;
+  POSTER_REWORK_SECRET?: string;
   TEST_STORE?: PosterStore;
 }
