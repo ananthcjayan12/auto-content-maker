@@ -48,6 +48,15 @@ class MemoryStore implements PosterStore {
     return `${slug}:${type}:${date}`;
   }
 
+  private generatedPosterKey(
+    slug: string,
+    type: PosterType,
+    date: string,
+    languageCode = "en",
+  ) {
+    return `${slug}:${type}:${date}:${languageCode}`;
+  }
+
   private typeReferenceKey(slug: string, type: PosterType) {
     return `${slug}:${type}`;
   }
@@ -218,8 +227,17 @@ class MemoryStore implements PosterStore {
     return saved;
   }
 
-  async getGeneratedPoster(slug: string, type: PosterType, date: string) {
-    return this.generatedPosters.get(this.packetKey(slug, type, date)) ?? null;
+  async getGeneratedPoster(
+    slug: string,
+    type: PosterType,
+    date: string,
+    languageCode = "en",
+  ) {
+    return (
+      this.generatedPosters.get(
+        this.generatedPosterKey(slug, type, date, languageCode),
+      ) ?? null
+    );
   }
 
   async listGeneratedPosters(
@@ -239,10 +257,27 @@ class MemoryStore implements PosterStore {
   async upsertGeneratedPoster(poster: GeneratedPoster) {
     const saved = { ...poster, updatedAt: new Date().toISOString() };
     this.generatedPosters.set(
-      this.packetKey(poster.businessSlug, poster.posterType, poster.date),
+      this.generatedPosterKey(
+        poster.businessSlug,
+        poster.posterType,
+        poster.date,
+        poster.languageCode ?? "en",
+      ),
       saved,
     );
     return saved;
+  }
+
+  async deleteGeneratedPostersForDate(slug: string, date: string) {
+    const deleted = [...this.generatedPosters.entries()]
+      .filter(
+        ([, poster]) => poster.businessSlug === slug && poster.date === date,
+      )
+      .map(([key, poster]) => {
+        this.generatedPosters.delete(key);
+        return poster;
+      });
+    return deleted;
   }
 }
 
@@ -436,13 +471,15 @@ describe("daily poster packet worker", () => {
     });
   });
 
-  it("renders the business-select admin login on the homepage", async () => {
+  it("renders SaaS-style signup and login options on the homepage", async () => {
     const response = await app.request("/", {}, env);
     const html = await response.text();
     expect(response.status).toBe(200);
-    expect(html).toContain("Poster admin");
-    expect(html).toContain(brand.businessName);
+    expect(html).toContain("Sign up");
+    expect(html).toContain("Existing customer login");
+    expect(html).toContain('name="businessSlug"');
     expect(html).toContain('name="token"');
+    expect(html).not.toContain(`<option value="${brand.businessSlug}"`);
   });
 
   it("creates a scoped HttpOnly admin session and opens the dashboard", async () => {
@@ -508,6 +545,849 @@ describe("daily poster packet worker", () => {
     expect(referenceDashboard).toContain(
       "It controls layout, fonts, hierarchy, spacing, and visual treatment",
     );
+  });
+
+  it("shows logout and future tasks by default in the customer app", async () => {
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    await store.upsertCalendarEntry({
+      businessSlug: brand.businessSlug,
+      date: "2026-06-10",
+      topic: "Past task",
+      message: "Past message",
+      cta: null,
+      posterMode: "normal",
+      posterType: "general",
+      templateId: null,
+      inspirationImageUrl: null,
+      notes: null,
+      status: "planned",
+    });
+    await store.upsertCalendarEntry({
+      businessSlug: brand.businessSlug,
+      date: "2026-06-20",
+      topic: "Future task",
+      message: "Future message",
+      cta: null,
+      posterMode: "normal",
+      posterType: "general",
+      templateId: null,
+      inspirationImageUrl: null,
+      notes: null,
+      status: "planned",
+    });
+    await store.upsertCalendarEntry({
+      businessSlug: brand.businessSlug,
+      date: today,
+      topic: "Today task",
+      message: "Today message",
+      cta: null,
+      posterMode: "normal",
+      posterType: "general",
+      templateId: null,
+      inspirationImageUrl: null,
+      notes: null,
+      status: "poster_ready",
+    });
+    await store.upsertGeneratedPoster({
+      businessSlug: brand.businessSlug,
+      posterType: "general",
+      date: today,
+      languageCode: "ml",
+      languageName: "Malayalam",
+      status: "ready",
+      contextUrl: "https://poster.example.com/daily-poster/context",
+      contextJsonUrl: "https://poster.example.com/daily-poster/context.json",
+      angle: "Today task",
+      briefJson: null,
+      prompt: null,
+      imageUrl: "https://poster.example.com/today-poster-ml.png",
+      imageContentType: "image/png",
+      r2Key: null,
+      geminiTextModel: null,
+      geminiImageModel: null,
+      imageResolution: null,
+      aspectRatio: "9:16",
+      geminiJobName: null,
+      briefUsage: null,
+      imageUsage: null,
+      costBreakdown: null,
+      validationErrors: [],
+      failureReason: null,
+    });
+    await store.upsertGeneratedPoster({
+      businessSlug: brand.businessSlug,
+      posterType: "general",
+      date: today,
+      languageCode: "hi",
+      languageName: "Hindi",
+      status: "ready",
+      contextUrl: "https://poster.example.com/daily-poster/context",
+      contextJsonUrl: "https://poster.example.com/daily-poster/context.json",
+      angle: "Today task",
+      briefJson: null,
+      prompt: null,
+      imageUrl: "https://poster.example.com/today-poster-hi.png",
+      imageContentType: "image/png",
+      r2Key: null,
+      geminiTextModel: null,
+      geminiImageModel: null,
+      imageResolution: null,
+      aspectRatio: "9:16",
+      geminiJobName: null,
+      briefUsage: null,
+      imageUsage: null,
+      costBreakdown: null,
+      validationErrors: [],
+      failureReason: null,
+    });
+    await store.upsertGeneratedPoster({
+      businessSlug: brand.businessSlug,
+      posterType: "general",
+      date: "2026-06-20",
+      languageCode: "ml",
+      languageName: "Malayalam",
+      status: "ready",
+      contextUrl: "https://poster.example.com/daily-poster/context",
+      contextJsonUrl: "https://poster.example.com/daily-poster/context.json",
+      angle: "Future task",
+      briefJson: null,
+      prompt: null,
+      imageUrl: "https://poster.example.com/future-poster.png",
+      imageContentType: "image/png",
+      r2Key: null,
+      geminiTextModel: null,
+      geminiImageModel: null,
+      imageResolution: null,
+      aspectRatio: "9:16",
+      geminiJobName: null,
+      briefUsage: null,
+      imageUsage: null,
+      costBreakdown: null,
+      validationErrors: [],
+      failureReason: null,
+    });
+    await store.upsertGeneratedPoster({
+      businessSlug: brand.businessSlug,
+      posterType: "general",
+      date: "2026-06-20",
+      languageCode: "hi",
+      languageName: "Hindi",
+      status: "ready",
+      contextUrl: "https://poster.example.com/daily-poster/context",
+      contextJsonUrl: "https://poster.example.com/daily-poster/context.json",
+      angle: "Future task",
+      briefJson: null,
+      prompt: null,
+      imageUrl: "https://poster.example.com/future-poster-hi.png",
+      imageContentType: "image/png",
+      r2Key: null,
+      geminiTextModel: null,
+      geminiImageModel: null,
+      imageResolution: null,
+      aspectRatio: "9:16",
+      geminiJobName: null,
+      briefUsage: null,
+      imageUsage: null,
+      costBreakdown: null,
+      validationErrors: [],
+      failureReason: null,
+    });
+
+    const response = await app.request(
+      `/app/${brand.businessSlug}?month=2026-06`,
+      { headers: { Cookie: cookie } },
+      env,
+    );
+    const html = await response.text();
+    expect(response.status).toBe(200);
+    expect(html).toContain("Logout");
+    expect(html).toContain("Future tasks");
+    expect(html).toContain("Download Malayalam");
+    expect(html).toContain("Download Hindi");
+    expect(html).toContain("today-poster-hi.png");
+    const taskSection =
+      html.split("<!-- VIEW: TASKS")[1]?.split("<!-- VIEW: INSPIRATION")[0] ??
+      "";
+    expect(taskSection).toContain("Future task");
+    expect(taskSection).not.toContain("Past message");
+    expect(taskSection).toContain("Preview poster");
+    expect(taskSection).toContain("Share poster");
+    expect(taskSection).toContain("Regenerate poster");
+    expect(taskSection).toContain("Delete");
+    expect(taskSection).toContain("WhatsApp");
+    expect(taskSection).toContain("Facebook");
+    expect(taskSection).toContain("Malayalam");
+    expect(taskSection).toContain("Hindi");
+    expect(taskSection).toContain("future-poster-hi.png");
+
+    const allResponse = await app.request(
+      `/app/${brand.businessSlug}?month=2026-06&taskFilter=all`,
+      { headers: { Cookie: cookie } },
+      env,
+    );
+    const allHtml = await allResponse.text();
+    const allTaskSection =
+      allHtml
+        .split("<!-- VIEW: TASKS")[1]
+        ?.split("<!-- VIEW: INSPIRATION")[0] ?? "";
+    expect(allTaskSection).toContain("Future task");
+    expect(allTaskSection).toContain("Past message");
+  });
+
+  it("can generate period content, regenerate existing task content, and delete all tasks", async () => {
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+
+    const pageResponse = await app.request(
+      `/app/${brand.businessSlug}?month=2026-06#calendar`,
+      { headers: { Cookie: cookie } },
+      env,
+    );
+    const html = await pageResponse.text();
+    expect(html).toContain("Generate Content");
+    expect(html).toContain("Regenerate Existing Content");
+    expect(html).toContain("Delete All Tasks");
+
+    const generateResponse = await app.request(
+      `/app/${brand.businessSlug}/calendar/generate-period`,
+      {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          fromDate: "2026-06-20",
+          toDate: "2026-06-22",
+          frequency: "daily",
+          style: "educational",
+          notes: "period focus",
+          mode: "generate",
+        }).toString(),
+      },
+      env,
+    );
+    expect(generateResponse.status).toBe(303);
+    expect(generateResponse.headers.get("location")).toContain("#calendar");
+    expect(
+      await store.listCalendarEntries(brand.businessSlug, {
+        from: "2026-06-20",
+        to: "2026-06-22",
+      }),
+    ).toHaveLength(3);
+
+    await store.upsertGeneratedPoster({
+      businessSlug: brand.businessSlug,
+      posterType: "general",
+      date: "2026-06-20",
+      languageCode: "en",
+      languageName: "English",
+      status: "ready",
+      contextUrl: "https://poster.example.com/daily-poster/context",
+      contextJsonUrl: "https://poster.example.com/daily-poster/context.json",
+      angle: "Old poster",
+      briefJson: null,
+      prompt: null,
+      imageUrl: "https://poster.example.com/old-poster.png",
+      imageContentType: "image/png",
+      r2Key: null,
+      geminiTextModel: null,
+      geminiImageModel: null,
+      imageResolution: null,
+      aspectRatio: "9:16",
+      geminiJobName: null,
+      briefUsage: null,
+      imageUsage: null,
+      costBreakdown: null,
+      validationErrors: [],
+      failureReason: null,
+    });
+    const beforePoster = await store.getGeneratedPoster(
+      brand.businessSlug,
+      "general",
+      "2026-06-20",
+    );
+
+    const regenerateResponse = await app.request(
+      `/app/${brand.businessSlug}/calendar/generate-period`,
+      {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          fromDate: "2026-06-20",
+          toDate: "2026-06-21",
+          frequency: "daily",
+          style: "promotional",
+          notes: "regenerate task content only",
+          mode: "regenerate-existing",
+        }).toString(),
+      },
+      env,
+    );
+    expect(regenerateResponse.status).toBe(303);
+    const regeneratedEntries = await store.listCalendarEntries(
+      brand.businessSlug,
+      {
+        from: "2026-06-20",
+        to: "2026-06-21",
+      },
+    );
+    expect(regeneratedEntries).toHaveLength(2);
+    expect(
+      regeneratedEntries.every((entry) => entry.status === "planned"),
+    ).toBe(true);
+    expect(
+      await store.getGeneratedPoster(
+        brand.businessSlug,
+        "general",
+        "2026-06-20",
+      ),
+    ).toEqual(beforePoster);
+
+    const deleteAllResponse = await app.request(
+      `/app/${brand.businessSlug}/calendar/delete-all`,
+      {
+        method: "POST",
+        headers: { Cookie: cookie },
+      },
+      env,
+    );
+    expect(deleteAllResponse.status).toBe(303);
+    expect(
+      await store.listCalendarEntries(brand.businessSlug, {
+        from: "0000-01-01",
+        to: "9999-12-31",
+      }),
+    ).toHaveLength(0);
+    expect(
+      await store.getGeneratedPoster(
+        brand.businessSlug,
+        "general",
+        "2026-06-20",
+      ),
+    ).toBeNull();
+  });
+
+  it("regenerates one task content without changing its poster", async () => {
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    await store.upsertCalendarEntry({
+      businessSlug: brand.businessSlug,
+      date: "2026-06-23",
+      topic: "Old weak content",
+      message: "Old message",
+      cta: "Call now",
+      posterMode: "normal",
+      posterType: "general",
+      templateId: null,
+      inspirationImageUrl: null,
+      notes: "keep it useful",
+      status: "poster_ready",
+    });
+    await store.upsertGeneratedPoster({
+      businessSlug: brand.businessSlug,
+      posterType: "general",
+      date: "2026-06-23",
+      languageCode: "en",
+      languageName: "English",
+      status: "ready",
+      contextUrl: "https://poster.example.com/daily-poster/context",
+      contextJsonUrl: "https://poster.example.com/daily-poster/context.json",
+      angle: "Old weak content",
+      briefJson: null,
+      prompt: null,
+      imageUrl: "https://poster.example.com/existing-poster.png",
+      imageContentType: "image/png",
+      r2Key: null,
+      geminiTextModel: null,
+      geminiImageModel: null,
+      imageResolution: null,
+      aspectRatio: "9:16",
+      geminiJobName: null,
+      briefUsage: null,
+      imageUsage: null,
+      costBreakdown: null,
+      validationErrors: [],
+      failureReason: null,
+    });
+    const beforePoster = await store.getGeneratedPoster(
+      brand.businessSlug,
+      "general",
+      "2026-06-23",
+    );
+
+    const response = await app.request(
+      `/app/${brand.businessSlug}/calendar/regenerate-content`,
+      {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          date: "2026-06-23",
+          topic: "Old weak content",
+          message: "Old message",
+          posterMode: "normal",
+          posterType: "general",
+          notes: "keep it useful",
+        }).toString(),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toContain("#edit-2026-06-23");
+    expect(
+      await store.getCalendarEntry(brand.businessSlug, "2026-06-23"),
+    ).toMatchObject({
+      topic: "Useful tip for customers",
+      status: "planned",
+    });
+    expect(
+      await store.getGeneratedPoster(
+        brand.businessSlug,
+        "general",
+        "2026-06-23",
+      ),
+    ).toEqual(beforePoster);
+  });
+
+  it("deletes a task together with generated poster variants for that date", async () => {
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    await store.upsertCalendarEntry({
+      businessSlug: brand.businessSlug,
+      date: "2026-06-24",
+      topic: "Delete me",
+      message: "Delete message",
+      cta: null,
+      posterMode: "normal",
+      posterType: "general",
+      templateId: null,
+      inspirationImageUrl: null,
+      notes: null,
+      status: "poster_ready",
+    });
+    for (const [languageCode, languageName] of [
+      ["en", "English"],
+      ["ml", "Malayalam"],
+    ] as const) {
+      await store.upsertGeneratedPoster({
+        businessSlug: brand.businessSlug,
+        posterType: "general",
+        date: "2026-06-24",
+        languageCode,
+        languageName,
+        status: "ready",
+        contextUrl: "https://poster.example.com/daily-poster/context",
+        contextJsonUrl: "https://poster.example.com/daily-poster/context.json",
+        angle: "Delete me",
+        briefJson: null,
+        prompt: null,
+        imageUrl: `https://poster.example.com/${languageCode}.png`,
+        imageContentType: "image/png",
+        r2Key: null,
+        geminiTextModel: null,
+        geminiImageModel: null,
+        imageResolution: null,
+        aspectRatio: "9:16",
+        geminiJobName: null,
+        briefUsage: null,
+        imageUsage: null,
+        costBreakdown: null,
+        validationErrors: [],
+        failureReason: null,
+      });
+    }
+
+    const response = await app.request(
+      `/app/${brand.businessSlug}/calendar/delete`,
+      {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ date: "2026-06-24" }).toString(),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(303);
+    expect(
+      await store.getCalendarEntry(brand.businessSlug, "2026-06-24"),
+    ).toBeNull();
+    expect(
+      await store.getGeneratedPoster(
+        brand.businessSlug,
+        "general",
+        "2026-06-24",
+      ),
+    ).toBeNull();
+    expect(
+      await store.getGeneratedPoster(
+        brand.businessSlug,
+        "general",
+        "2026-06-24",
+        "ml",
+      ),
+    ).toBeNull();
+  });
+
+  it("saves multilingual typography guidance from customer settings", async () => {
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+
+    const settingsPage = await app.request(
+      `/app/${brand.businessSlug}`,
+      {
+        headers: { Cookie: cookie },
+      },
+      env,
+    );
+    expect(await settingsPage.text()).toContain("Languages & typography");
+
+    const form = new FormData();
+    form.set("enabled", "on");
+    form.set("localTime", "08:30");
+    form.set("recipientEmails", "");
+    form.set("languageTypographyEnabled", "on");
+    form.set("languageCount", "2");
+    form.set("languageName_0", "Malayalam");
+    form.set("languageRole_0", "primary");
+    form.set("languageEnabled_0", "on");
+    form.set(
+      "existingLanguageReferenceImageUrl_0",
+      "https://poster.example.com/assets/businesses/dr-poojas-smile-craft/brand/ml-font.png",
+    );
+    form.set(
+      "languageStyleProfile_0",
+      "Bold rounded Malayalam display lettering with thick strokes and soft curves.",
+    );
+    form.set("languageName_1", "Hindi");
+    form.set("languageRole_1", "secondary");
+    form.set("languageEnabled_1", "on");
+    form.set(
+      "existingLanguageReferenceImageUrl_1",
+      "https://poster.example.com/assets/businesses/dr-poojas-smile-craft/brand/hi-font.png",
+    );
+    form.set("languageStyleProfile_1", "Clean Devanagari display lettering.");
+    form.set("useReferenceForAllPosters", "on");
+
+    const response = await app.request(
+      `/app/${brand.businessSlug}/settings`,
+      {
+        method: "POST",
+        headers: { Cookie: cookie },
+        body: form,
+      },
+      env,
+    );
+
+    expect(response.status).toBe(303);
+    expect(await store.getBrand(brand.businessSlug)).toMatchObject({
+      languageTypography: {
+        enabled: true,
+        primaryLanguage: "Malayalam",
+        additionalLanguages: ["Hindi"],
+        typographyReferenceImageUrl:
+          "https://poster.example.com/assets/businesses/dr-poojas-smile-craft/brand/ml-font.png",
+        typographyStyleProfile:
+          "Bold rounded Malayalam display lettering with thick strokes and soft curves.",
+        useReferenceForAllPosters: true,
+        profiles: [
+          {
+            language: "Malayalam",
+            role: "primary",
+            referenceImageUrl:
+              "https://poster.example.com/assets/businesses/dr-poojas-smile-craft/brand/ml-font.png",
+            styleProfile:
+              "Bold rounded Malayalam display lettering with thick strokes and soft curves.",
+            enabled: true,
+          },
+          {
+            language: "Hindi",
+            role: "secondary",
+            referenceImageUrl:
+              "https://poster.example.com/assets/businesses/dr-poojas-smile-craft/brand/hi-font.png",
+            styleProfile: "Clean Devanagari display lettering.",
+            enabled: true,
+          },
+        ],
+      },
+    });
+  });
+
+  it("renders customer settings when language typography JSON is partial", async () => {
+    store.brands.set(brand.businessSlug, {
+      ...brand,
+      languageTypography: {} as BusinessBrandSystem["languageTypography"],
+    });
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+
+    const response = await app.request(
+      `/app/${brand.businessSlug}`,
+      { headers: { Cookie: cookie } },
+      env,
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain("Languages & typography");
+    expect(html).toContain('id="language-card-grid"');
+    expect(html).toContain('name="languageName_0" value="English"');
+  });
+
+  it("generates every enabled language from the customer task action", async () => {
+    store.brands.set(brand.businessSlug, {
+      ...brand,
+      logoUrl: "https://poster.example.com/assets/logo.png",
+      brandReferenceBoardUrl: "https://poster.example.com/assets/board.png",
+      languageTypography: {
+        enabled: true,
+        primaryLanguage: "Malayalam",
+        additionalLanguages: ["Hindi"],
+        typographyReferenceImageUrl:
+          "https://poster.example.com/assets/ml-typography.png",
+        typographyStyleProfile: "Rounded Malayalam display lettering.",
+        useReferenceForAllPosters: true,
+        profiles: [
+          {
+            language: "Malayalam",
+            role: "primary",
+            referenceImageUrl:
+              "https://poster.example.com/assets/ml-typography.png",
+            styleProfile: "Rounded Malayalam display lettering.",
+            enabled: true,
+          },
+          {
+            language: "Hindi",
+            role: "secondary",
+            referenceImageUrl:
+              "https://poster.example.com/assets/hi-typography.png",
+            styleProfile: "Clean Devanagari display lettering.",
+            enabled: true,
+          },
+        ],
+      },
+    });
+    await store.upsertCalendarEntry({
+      businessSlug: brand.businessSlug,
+      date: "2026-06-20",
+      topic: "Future task",
+      message: "Future message",
+      cta: null,
+      posterMode: "normal",
+      posterType: "general",
+      templateId: null,
+      inspirationImageUrl: null,
+      notes: null,
+      status: "planned",
+    });
+    const loginResponse = await app.request(
+      "/admin/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          businessSlug: brand.businessSlug,
+          token: "test-secret",
+        }).toString(),
+      },
+      env,
+    );
+    const cookie = loginResponse.headers.get("set-cookie")?.split(";")[0] ?? "";
+    const put = vi.fn().mockResolvedValue(undefined);
+    env.GEMINI_API_KEY = "gemini-secret";
+    env.ASSETS = {
+      get: vi.fn().mockResolvedValue({
+        arrayBuffer: vi
+          .fn()
+          .mockResolvedValue(new Uint8Array([137, 80, 78, 71]).buffer),
+        writeHttpMetadata: (headers: Headers) => {
+          headers.set("content-type", "image/png");
+        },
+      }),
+      put,
+    } as unknown as R2Bucket;
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              candidates: [{ content: { parts: [{ text: "{}" }] } }],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        )
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        inlineData: { mimeType: "image/png", data: "iVBORw==" },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        )
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              candidates: [{ content: { parts: [{ text: "{}" }] } }],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        )
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        inlineData: { mimeType: "image/png", data: "iVBORw==" },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    );
+
+    const response = await app.request(
+      `/app/${brand.businessSlug}/calendar/generate-poster`,
+      {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ date: "2026-06-20" }).toString(),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toContain("generation=started");
+    for (let index = 0; index < 200; index += 1) {
+      await Promise.resolve();
+      const poster = await store.getGeneratedPoster(
+        brand.businessSlug,
+        "general",
+        "2026-06-20",
+        "hi",
+      );
+      if (poster?.status === "ready") break;
+    }
+    expect(
+      await store.getGeneratedPoster(
+        brand.businessSlug,
+        "general",
+        "2026-06-20",
+        "ml",
+      ),
+    ).toMatchObject({
+      status: "ready",
+      languageName: "Malayalam",
+    });
+    expect(
+      await store.getGeneratedPoster(
+        brand.businessSlug,
+        "general",
+        "2026-06-20",
+        "hi",
+      ),
+    ).toMatchObject({
+      status: "ready",
+      languageName: "Hindi",
+    });
+    expect(put).toHaveBeenCalledTimes(2);
   });
 
   it("rejects an invalid dashboard token", async () => {
@@ -586,7 +1466,7 @@ describe("daily poster packet worker", () => {
       darkText: "#18181b",
       mutedText: "#71717a",
     });
-    expect(await store.listTemplatePatterns("glow-studio")).toHaveLength(4);
+    expect(await store.listTemplatePatterns("glow-studio")).toHaveLength(0);
 
     const editResponse = await app.request(
       "/onboarding/glow-studio/business",
@@ -657,9 +1537,11 @@ describe("daily poster packet worker", () => {
       env,
     );
     expect(planResponse.status).toBe(303);
-    expect(
-      await store.listCalendarEntries("glow-studio", { month: "2026-06" }),
-    ).not.toHaveLength(0);
+    const generatedEntries = await store.listCalendarEntries("glow-studio", {
+      month: "2026-06",
+    });
+    expect(generatedEntries).not.toHaveLength(0);
+    expect(generatedEntries.every((entry) => entry.date >= today)).toBe(true);
 
     const activateResponse = await app.request(
       "/onboarding/glow-studio/activate",
@@ -1031,6 +1913,33 @@ describe("daily poster packet worker", () => {
       ...brand,
       logoUrl: "https://poster.example.com/assets/logo.png",
       brandReferenceBoardUrl: "https://poster.example.com/assets/board.png",
+      languageTypography: {
+        enabled: true,
+        primaryLanguage: "Malayalam",
+        additionalLanguages: ["Hindi"],
+        typographyReferenceImageUrl:
+          "https://poster.example.com/assets/ml-typography.png",
+        typographyStyleProfile: "Rounded Malayalam display lettering.",
+        useReferenceForAllPosters: true,
+        profiles: [
+          {
+            language: "Malayalam",
+            role: "primary",
+            referenceImageUrl:
+              "https://poster.example.com/assets/ml-typography.png",
+            styleProfile: "Rounded Malayalam display lettering.",
+            enabled: true,
+          },
+          {
+            language: "Hindi",
+            role: "secondary",
+            referenceImageUrl:
+              "https://poster.example.com/assets/hi-typography.png",
+            styleProfile: "Clean Devanagari display lettering.",
+            enabled: true,
+          },
+        ],
+      },
     });
     store.typeReferences.set(`${brand.businessSlug}:awareness`, {
       businessSlug: brand.businessSlug,
@@ -1064,17 +1973,52 @@ describe("daily poster packet worker", () => {
     expect(html).toContain("Logo image base64");
     expect(html).toContain("Brand reference board image base64");
     expect(html).toContain("awareness poster reference image base64");
+    expect(html).toContain("Language & Typography Guidance");
+    expect(html).toContain("Additional languages");
+    expect(html).toContain("Hindi");
+    expect(html).toContain("Malayalam typography reference image base64");
+    expect(html).toContain("Hindi typography reference image base64");
     expect(html).toContain("iVBORw==");
     expect(html).not.toContain("Final ChatGPT Task Instruction");
     expect(html).not.toContain("Default poster rules");
     expect(html).not.toContain("Hex palette for LLM");
     expect(html).not.toContain("Permanent awareness style reference");
     expect(html).toContain('content="noindex"');
-    expect(env.ASSETS.get).toHaveBeenCalledTimes(3);
+    expect(env.ASSETS.get).toHaveBeenCalledTimes(5);
   });
 
   it("returns stable brand context JSON without requiring a daily packet", async () => {
     store.packets.clear();
+    store.brands.set(brand.businessSlug, {
+      ...brand,
+      languageTypography: {
+        enabled: true,
+        primaryLanguage: "Malayalam",
+        additionalLanguages: ["Hindi"],
+        typographyReferenceImageUrl:
+          "https://poster.example.com/assets/ml-typography.png",
+        typographyStyleProfile: "Rounded Malayalam display lettering.",
+        useReferenceForAllPosters: true,
+        profiles: [
+          {
+            language: "Malayalam",
+            role: "primary",
+            referenceImageUrl:
+              "https://poster.example.com/assets/ml-typography.png",
+            styleProfile: "Rounded Malayalam display lettering.",
+            enabled: true,
+          },
+          {
+            language: "Hindi",
+            role: "secondary",
+            referenceImageUrl:
+              "https://poster.example.com/assets/hi-typography.png",
+            styleProfile: "Clean Devanagari display lettering.",
+            enabled: true,
+          },
+        ],
+      },
+    });
     const response = await app.request(
       `/daily-poster/${brand.businessSlug}/awareness/today.json`,
       {},
@@ -1085,6 +2029,9 @@ describe("daily poster packet worker", () => {
       posterType: PosterType;
       posterReferenceImageUrls: string[];
       resolvedDate: string;
+      languageTypography: NonNullable<
+        BusinessBrandSystem["languageTypography"]
+      >;
     };
     expect(response.status).toBe(200);
     expect(body.business.businessSlug).toBe(brand.businessSlug);
@@ -1092,6 +2039,25 @@ describe("daily poster packet worker", () => {
     expect(body.posterReferenceImageUrls).toEqual([
       "https://example.com/type-ref.jpg",
     ]);
+    expect(body.languageTypography).toMatchObject({
+      enabled: true,
+      primaryLanguage: "Malayalam",
+      additionalLanguages: ["Hindi"],
+      profiles: [
+        {
+          language: "Malayalam",
+          role: "primary",
+          referenceImageUrl:
+            "https://poster.example.com/assets/ml-typography.png",
+        },
+        {
+          language: "Hindi",
+          role: "secondary",
+          referenceImageUrl:
+            "https://poster.example.com/assets/hi-typography.png",
+        },
+      ],
+    });
     expect(body.resolvedDate).toBe(today);
   });
 
@@ -1219,6 +2185,16 @@ describe("daily poster packet worker", () => {
       ...brand,
       logoUrl: "https://poster.example.com/assets/logo.png",
       brandReferenceBoardUrl: "https://poster.example.com/assets/board.png",
+      languageTypography: {
+        enabled: true,
+        primaryLanguage: "Malayalam",
+        additionalLanguages: ["Hindi"],
+        typographyReferenceImageUrl:
+          "https://poster.example.com/assets/typography-reference.png",
+        typographyStyleProfile:
+          "Bold rounded Malayalam display lettering with thick soft strokes.",
+        useReferenceForAllPosters: true,
+      },
     });
     store.typeReferences.set(`${brand.businessSlug}:awareness`, {
       businessSlug: brand.businessSlug,
@@ -1283,6 +2259,48 @@ describe("daily poster packet worker", () => {
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        angle: "Monsoon dental care Hindi",
+                        headline: "Protect your smile this season",
+                      }),
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    {
+                      inlineData: {
+                        mimeType: "image/jpeg",
+                        data: "/9j/2w==",
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
       );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -1297,6 +2315,7 @@ describe("daily poster packet worker", () => {
     const body = (await response.json()) as {
       success: boolean;
       generatedPoster: GeneratedPoster;
+      generatedPosters: GeneratedPoster[];
     };
 
     expect(response.status).toBe(200);
@@ -1305,11 +2324,16 @@ describe("daily poster packet worker", () => {
     expect(body.generatedPoster.angle).toBe("Monsoon dental care");
     expect(body.generatedPoster.imageUrl).toMatch(
       new RegExp(
-        `^https://poster\\.example\\.com/assets/businesses/${brand.businessSlug}/generated/awareness/${today}-\\d{17}\\.jpg$`,
+        `^https://poster\\.example\\.com/assets/businesses/${brand.businessSlug}/generated/awareness/${today}-ml-\\d{17}\\.jpg$`,
       ),
     );
+    expect(body.generatedPoster.languageCode).toBe("ml");
+    expect(body.generatedPosters.map((poster) => poster.languageCode)).toEqual([
+      "ml",
+      "hi",
+    ]);
     expect(body.generatedPoster.prompt).toContain("Generation run id:");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     const imageCall = fetchMock.mock.calls[1];
     expect(imageCall).toBeDefined();
     const imageCallBody = JSON.parse(String(imageCall?.[1]?.body));
@@ -1317,9 +2341,15 @@ describe("daily poster packet worker", () => {
       "/v1/models/gemini-3.1-flash-image:generateContent",
     );
     expect(imageCallBody.generationConfig).toBeUndefined();
-    expect(imageCallBody.contents[0].parts).toHaveLength(7);
+    expect(imageCallBody.contents[0].parts).toHaveLength(9);
     expect(JSON.stringify(imageCallBody.contents[0].parts)).toContain(
       "REFERENCE IMAGE: Original logo",
+    );
+    expect(JSON.stringify(imageCallBody.contents[0].parts)).toContain(
+      "REFERENCE IMAGE: Typography reference for multilingual poster text",
+    );
+    expect(body.generatedPoster.prompt).toContain(
+      "Primary poster language: Malayalam",
     );
     expect(JSON.stringify(imageCallBody.contents[0].parts)).toContain(
       "REFERENCE IMAGE: awareness poster style reference 1",
@@ -1327,8 +2357,18 @@ describe("daily poster packet worker", () => {
     expect(JSON.stringify(imageCallBody.contents[0].parts)).toContain(
       "follow the editable reference-image instructions",
     );
-    expect(env.ASSETS.get).toHaveBeenCalledTimes(3);
-    expect(put).toHaveBeenCalledOnce();
+    expect(
+      (
+        await store.getGeneratedPoster(
+          brand.businessSlug,
+          "awareness",
+          today,
+          "hi",
+        )
+      )?.languageName,
+    ).toBe("Hindi");
+    expect(env.ASSETS.get).toHaveBeenCalledTimes(8);
+    expect(put).toHaveBeenCalledTimes(2);
   });
 
   it("can manually generate the daily brief before making the poster", async () => {

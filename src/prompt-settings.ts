@@ -46,7 +46,7 @@ LAYOUT — FIXED
 - Layout: {{visualLayout}}
 - Photography: {{photoStyle}}
 - Keep all important text inside mobile-safe margins.
-- Do not create a crowded flyer or generic stock-template design.
+- Do not create a crowded flyer or generic stock design.
 
 OUTPUT RULES
 - Produce one finished poster only.

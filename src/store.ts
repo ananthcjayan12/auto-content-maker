@@ -33,6 +33,7 @@ interface BrandRow {
   typography_json: string;
   visual_style_json: string;
   default_poster_rules_json: string;
+  language_typography_json?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -156,6 +157,8 @@ interface GeneratedPosterRow {
   business_slug: string;
   poster_type: PosterType;
   poster_date: string;
+  language_code?: string | null;
+  language_name?: string | null;
   status: GeneratedPosterStatus;
   context_url: string;
   context_json_url: string;
@@ -187,6 +190,98 @@ function parseJson<T>(value: string, fallback: T): T {
   }
 }
 
+function normalizeLanguageTypography(
+  value: unknown,
+): NonNullable<BusinessBrandSystem["languageTypography"]> {
+  const input =
+    typeof value === "object" && value !== null
+      ? (value as Record<string, unknown>)
+      : {};
+  const legacyPrimary =
+    typeof input.primaryLanguage === "string" && input.primaryLanguage.trim()
+      ? input.primaryLanguage.trim()
+      : "English";
+  const legacyAdditional = Array.isArray(input.additionalLanguages)
+    ? input.additionalLanguages
+        .filter((language): language is string => typeof language === "string")
+        .map((language) => language.trim())
+        .filter(Boolean)
+    : [];
+  const legacyReferenceImageUrl =
+    typeof input.typographyReferenceImageUrl === "string" &&
+    input.typographyReferenceImageUrl.trim()
+      ? input.typographyReferenceImageUrl.trim()
+      : null;
+  const legacyStyleProfile =
+    typeof input.typographyStyleProfile === "string" &&
+    input.typographyStyleProfile.trim()
+      ? input.typographyStyleProfile.trim()
+      : null;
+  const profiles = Array.isArray(input.profiles)
+    ? input.profiles
+        .filter(
+          (profile): profile is Record<string, unknown> =>
+            typeof profile === "object" && profile !== null,
+        )
+        .map((profile, index) => ({
+          language:
+            typeof profile.language === "string" && profile.language.trim()
+              ? profile.language.trim()
+              : index === 0
+                ? legacyPrimary
+                : "",
+          role:
+            profile.role === "primary"
+              ? ("primary" as const)
+              : ("secondary" as const),
+          referenceImageUrl:
+            typeof profile.referenceImageUrl === "string" &&
+            profile.referenceImageUrl.trim()
+              ? profile.referenceImageUrl.trim()
+              : null,
+          styleProfile:
+            typeof profile.styleProfile === "string" &&
+            profile.styleProfile.trim()
+              ? profile.styleProfile.trim()
+              : null,
+          enabled: profile.enabled !== false,
+        }))
+        .filter((profile) => profile.language)
+        .slice(0, 8)
+    : [
+        {
+          language: legacyPrimary,
+          role: "primary" as const,
+          referenceImageUrl: legacyReferenceImageUrl,
+          styleProfile: legacyStyleProfile,
+          enabled: true,
+        },
+        ...legacyAdditional.map((language) => ({
+          language,
+          role: "secondary" as const,
+          referenceImageUrl: legacyReferenceImageUrl,
+          styleProfile: legacyStyleProfile,
+          enabled: true,
+        })),
+      ].slice(0, 8);
+  const primaryProfile =
+    profiles.find((profile) => profile.role === "primary") ?? profiles[0];
+  return {
+    enabled: input.enabled === true,
+    primaryLanguage: primaryProfile?.language ?? legacyPrimary,
+    additionalLanguages: profiles
+      .filter(
+        (profile) => profile.language !== (primaryProfile?.language ?? ""),
+      )
+      .map((profile) => profile.language),
+    typographyReferenceImageUrl:
+      primaryProfile?.referenceImageUrl ?? legacyReferenceImageUrl,
+    typographyStyleProfile: primaryProfile?.styleProfile ?? legacyStyleProfile,
+    useReferenceForAllPosters: input.useReferenceForAllPosters === true,
+    profiles,
+  };
+}
+
 function mapBrand(row: BrandRow): BusinessBrandSystem {
   return {
     businessSlug: row.business_slug,
@@ -214,6 +309,9 @@ function mapBrand(row: BrandRow): BusinessBrandSystem {
       avoid: [],
     }),
     defaultPosterRules: parseJson(row.default_poster_rules_json, []),
+    languageTypography: normalizeLanguageTypography(
+      parseJson(row.language_typography_json ?? "{}", {}),
+    ),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -374,6 +472,8 @@ function mapGeneratedPoster(row: GeneratedPosterRow): GeneratedPoster {
     businessSlug: row.business_slug,
     posterType: row.poster_type,
     date: row.poster_date,
+    languageCode: row.language_code ?? "en",
+    languageName: row.language_name ?? "English",
     status: row.status,
     contextUrl: row.context_url,
     contextJsonUrl: row.context_json_url,
@@ -433,8 +533,8 @@ export class D1PosterStore implements PosterStore {
         `INSERT INTO business_brand_systems (
           business_slug, business_name, phone, website_url, logo_url,
           brand_reference_board_url, colors_json, typography_json,
-          visual_style_json, default_poster_rules_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          visual_style_json, default_poster_rules_json, language_typography_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(business_slug) DO UPDATE SET
           business_name = excluded.business_name,
           phone = excluded.phone,
@@ -445,6 +545,7 @@ export class D1PosterStore implements PosterStore {
           typography_json = excluded.typography_json,
           visual_style_json = excluded.visual_style_json,
           default_poster_rules_json = excluded.default_poster_rules_json,
+          language_typography_json = excluded.language_typography_json,
           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
       )
       .bind(
@@ -458,6 +559,16 @@ export class D1PosterStore implements PosterStore {
         JSON.stringify(brand.typography),
         JSON.stringify(brand.visualStyle),
         JSON.stringify(brand.defaultPosterRules),
+        JSON.stringify(
+          brand.languageTypography ?? {
+            enabled: false,
+            primaryLanguage: "English",
+            additionalLanguages: [],
+            typographyReferenceImageUrl: null,
+            typographyStyleProfile: null,
+            useReferenceForAllPosters: false,
+          },
+        ),
       )
       .run();
 
@@ -954,14 +1065,15 @@ export class D1PosterStore implements PosterStore {
     businessSlug: string,
     posterType: PosterType,
     date: string,
+    languageCode = "en",
   ): Promise<GeneratedPoster | null> {
     const row = await this.db
       .prepare(
         `SELECT * FROM generated_posters
-         WHERE business_slug = ? AND poster_type = ? AND poster_date = ?
+         WHERE business_slug = ? AND poster_type = ? AND poster_date = ? AND language_code = ?
          LIMIT 1`,
       )
-      .bind(businessSlug, posterType, date)
+      .bind(businessSlug, posterType, date, languageCode)
       .first<GeneratedPosterRow>();
     return row ? mapGeneratedPoster(row) : null;
   }
@@ -1001,14 +1113,15 @@ export class D1PosterStore implements PosterStore {
     await this.db
       .prepare(
         `INSERT INTO generated_posters (
-          business_slug, poster_type, poster_date, status, context_url,
+          business_slug, poster_type, poster_date, language_code, language_name, status, context_url,
           context_json_url, angle, brief_json, prompt, image_url,
           image_content_type, r2_key, gemini_text_model, gemini_image_model,
           image_resolution, aspect_ratio, gemini_job_name, brief_usage_json,
           image_usage_json, cost_breakdown_json, validation_errors_json,
           failure_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(business_slug, poster_type, poster_date) DO UPDATE SET
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(business_slug, poster_type, poster_date, language_code) DO UPDATE SET
+          language_name = excluded.language_name,
           status = excluded.status,
           context_url = excluded.context_url,
           context_json_url = excluded.context_json_url,
@@ -1034,6 +1147,8 @@ export class D1PosterStore implements PosterStore {
         poster.businessSlug,
         poster.posterType,
         poster.date,
+        poster.languageCode ?? "en",
+        poster.languageName ?? "English",
         poster.status,
         poster.contextUrl,
         poster.contextJsonUrl,
@@ -1060,6 +1175,29 @@ export class D1PosterStore implements PosterStore {
       poster.businessSlug,
       poster.posterType,
       poster.date,
+      poster.languageCode ?? "en",
     ))!;
+  }
+
+  async deleteGeneratedPostersForDate(
+    businessSlug: string,
+    date: string,
+  ): Promise<GeneratedPoster[]> {
+    const result = await this.db
+      .prepare(
+        `SELECT * FROM generated_posters
+         WHERE business_slug = ? AND poster_date = ?`,
+      )
+      .bind(businessSlug, date)
+      .all<GeneratedPosterRow>();
+    const posters = (result.results ?? []).map(mapGeneratedPoster);
+    await this.db
+      .prepare(
+        `DELETE FROM generated_posters
+         WHERE business_slug = ? AND poster_date = ?`,
+      )
+      .bind(businessSlug, date)
+      .run();
+    return posters;
   }
 }

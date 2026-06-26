@@ -5,7 +5,6 @@ import type {
   CalendarPosterMode,
   ContentCalendarEntry,
   GeneratedPoster,
-  PosterTemplatePattern,
   PosterType,
 } from "./types";
 
@@ -16,6 +15,10 @@ function escapeHtml(value: unknown): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function jsString(value: unknown): string {
+  return JSON.stringify(String(value ?? ""));
 }
 
 function selected(value: string, current: string): string {
@@ -55,19 +58,13 @@ function posterTypeOptions(current: PosterType): string {
     .join("");
 }
 
-function templateOptions(
-  patterns: PosterTemplatePattern[],
-  current: string | null,
-): string {
-  return [
-    `<option value="">Auto choose</option>`,
-    ...patterns
-      .filter((pattern) => pattern.isActive)
-      .map(
-        (pattern) =>
-          `<option value="${escapeHtml(pattern.templateId)}"${selected(pattern.templateId, current ?? "")}>${escapeHtml(pattern.name)}</option>`,
-      ),
-  ].join("");
+function taskFilterLabel(value: string): string {
+  if (value === "all") return "All tasks";
+  if (value === "past") return "Past tasks";
+  if (value === "ready") return "Poster ready";
+  if (value === "empty") return "Empty dates";
+  if (value === "skipped") return "Skipped";
+  return "Future tasks";
 }
 
 const styles = `
@@ -198,12 +195,12 @@ const styles = `
   #today { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
   body:has(#calendar:target) #today { display: none; }
   body:has(#inspiration:target) #today { display: none; }
-  body:has(#templates:target) #today { display: none; }
+  body:has(#brand:target) #today { display: none; }
   body:has(#settings:target) #today { display: none; }
   body:has(#history:target) #today { display: none; }
   body:has(details.drawer:target) #today { display: none; }
   
-  #calendar:target, #inspiration:target, #templates:target, #settings:target, #history:target { display: block !important; }
+  #calendar:target, #inspiration:target, #brand:target, #settings:target, #history:target { display: block !important; }
   body:has(details.drawer:target) #calendar { display: block !important; }
   #today:target { display: grid !important; }
   
@@ -211,7 +208,7 @@ const styles = `
   body:has(#today:target) .nav a[href="#today"],
   body:has(#calendar:target) .nav a[href="#calendar"],
   body:has(#inspiration:target) .nav a[href="#inspiration"],
-  body:has(#templates:target) .nav a[href="#templates"],
+  body:has(#brand:target) .nav a[href="#brand"],
   body:has(#settings:target) .nav a[href="#settings"],
   body:has(#history:target) .nav a[href="#history"] {
     color: var(--brand-primary);
@@ -377,6 +374,151 @@ const styles = `
     padding: 8px 14px;
     font-size: 0.85rem;
   }
+  .icon-button {
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    flex: 0 0 38px;
+    line-height: 1;
+  }
+  .icon-button svg {
+    width: 17px;
+    height: 17px;
+    max-width: 17px;
+    max-height: 17px;
+    display: block;
+  }
+  button svg,
+  .button svg {
+    flex: 0 0 auto;
+  }
+  .share-menu {
+    position: relative;
+    margin: 0;
+  }
+  .share-menu summary {
+    list-style: none;
+  }
+  .share-menu summary::-webkit-details-marker {
+    display: none;
+  }
+  .share-options {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 8px);
+    z-index: 150;
+    display: grid;
+    gap: 6px;
+    min-width: 190px;
+    padding: 8px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+  }
+  .share-options a,
+  .share-options button {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 9px 10px;
+    font-size: 0.86rem;
+  }
+  .language-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+  .language-card {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-color);
+    padding: 16px;
+  }
+  .language-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .language-card-head strong {
+    color: var(--text-primary);
+    font-size: 0.98rem;
+  }
+  .language-card .mini-field {
+    margin-top: 10px;
+  }
+  .language-card .mini-field label {
+    margin: 0 0 6px;
+    font-size: 0.78rem;
+  }
+  .language-card textarea {
+    min-height: 92px;
+  }
+  .reference-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 6px 8px;
+    border-radius: 999px;
+    background: #ecfdf5;
+    color: var(--success-text);
+    font-size: 0.78rem;
+    font-weight: 800;
+  }
+  .poster-variant-actions {
+    display: grid;
+    gap: 8px;
+    min-width: 190px;
+  }
+  .poster-variant-action-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-color);
+  }
+  .poster-variant-action-row .language-name {
+    min-width: 76px;
+    max-width: 116px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.82rem;
+    font-weight: 800;
+    color: var(--text-primary);
+  }
+  .visual-reference-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .visual-reference-grid.large {
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    margin-top: 12px;
+  }
+  .visual-reference-grid img,
+  .style-sheet-preview img {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: #fff;
+  }
+  .style-sheet-preview {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 14px;
+    align-items: start;
+  }
+  .style-sheet-preview img {
+    aspect-ratio: 4/3;
+  }
   
   /* Forms */
   label {
@@ -459,6 +601,44 @@ const styles = `
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+  .poster-preview:has(.poster-variant-preview-grid) {
+    aspect-ratio: auto;
+    min-height: 360px;
+    padding: 12px;
+    align-items: stretch;
+  }
+  .poster-variant-preview-grid {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+  }
+  .poster-variant-preview {
+    min-height: 240px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: #fff;
+    position: relative;
+  }
+  .poster-variant-preview img {
+    width: 100%;
+    height: 100%;
+    min-height: 240px;
+    object-fit: cover;
+    display: block;
+  }
+  .poster-variant-label {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    padding: 5px 8px;
+    border-radius: 999px;
+    background: rgba(17, 24, 39, 0.86);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 800;
   }
   
   .brand-preview {
@@ -552,6 +732,11 @@ const styles = `
     background: var(--danger-bg);
     color: var(--danger-text);
     border-color: #fecaca;
+  }
+  .alert.info {
+    background: var(--brand-light);
+    color: var(--brand-hover);
+    border-color: #bae6fd;
   }
 
   .modal-overlay {
@@ -674,6 +859,10 @@ const styles = `
     .modal-body button {
       width: 100%;
     }
+    .share-options {
+      left: 0;
+      right: auto;
+    }
   }
 `;
 
@@ -686,6 +875,20 @@ function document(title: string, body: string): string {
       btn.innerHTML = '<svg style="width:14px;height:14px;margin-right:4px;vertical-align:middle;" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg> <span>Copied!</span>';
       setTimeout(() => { btn.innerHTML = old; }, 1500);
     });
+  }
+  function copyShareUrl(url, btn) {
+    navigator.clipboard.writeText(url).then(() => {
+      const old = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.textContent = old; }, 1400);
+    });
+  }
+  function sharePoster(url, text, btn) {
+    if (navigator.share) {
+      navigator.share({ title: text || 'Generated poster', text: text || 'Generated poster', url }).catch(() => {});
+      return;
+    }
+    copyShareUrl(url, btn);
   }
   function openTargetDrawer() {
     if (!location.hash) return;
@@ -709,12 +912,119 @@ function document(title: string, body: string): string {
     modal.classList.remove('is-open');
     document.body.style.overflow = '';
   }
+  function openRegeneratePosterModal(date, posterType, title, languageCode, languageName) {
+    const dateField = document.getElementById('regenerate-date');
+    const typeField = document.getElementById('regenerate-poster-type');
+    const languageField = document.getElementById('regenerate-language-code');
+    const titleNode = document.getElementById('regenerate-modal-title');
+    const languageNode = document.getElementById('regenerate-language-label');
+    if (dateField) dateField.value = date;
+    if (typeField) typeField.value = posterType || 'general';
+    if (languageField) languageField.value = languageCode || '';
+    if (titleNode) titleNode.textContent = title ? 'Regenerate: ' + title : 'Regenerate Poster';
+    if (languageNode) languageNode.textContent = languageName ? 'Only the ' + languageName + ' poster will be regenerated.' : 'Choose a language-specific regenerate button from the task row.';
+    openModal('regenerate-modal');
+  }
+  async function pollGenerationStatus() {
+    const params = new URLSearchParams(location.search);
+    if (params.get('generation') !== 'started') return;
+    const date = params.get('date');
+    const posterType = params.get('posterType') || 'general';
+    const statusNode = document.getElementById('generation-status');
+    if (!date || !statusNode) return;
+    let attempts = 0;
+    const tick = async () => {
+      attempts += 1;
+      try {
+        const response = await fetch(location.pathname + '/calendar/generation-status?date=' + encodeURIComponent(date) + '&posterType=' + encodeURIComponent(posterType), { headers: { Accept: 'application/json' } });
+        const body = await response.json();
+        const posters = Array.isArray(body.posters) ? body.posters : [];
+        const ready = posters.filter((poster) => poster.status === 'ready').length;
+        const failed = posters.find((poster) => poster.status === 'failed' || poster.status === 'needs_review');
+        if (ready && ready === posters.length) {
+          statusNode.textContent = 'Poster ready. Refreshing...';
+          location.href = location.pathname + '?month=' + encodeURIComponent(date.slice(0, 7)) + '&message=' + encodeURIComponent('Poster generated successfully.') + '#calendar';
+          return;
+        }
+        if (failed) {
+          statusNode.textContent = failed.failureReason || 'Generation needs review.';
+          return;
+        }
+        statusNode.textContent = ready ? ready + ' poster variant ready. Waiting for the rest...' : 'Generation is running. This page will update when the poster is ready.';
+      } catch {
+        statusNode.textContent = 'Generation is running. Waiting for status...';
+      }
+      if (attempts < 120) setTimeout(tick, attempts < 20 ? 3000 : 7000);
+    };
+    tick();
+  }
+  function previewSelectedImage(input, targetId) {
+    const target = document.getElementById(targetId);
+    const file = input && input.files && input.files[0];
+    if (!target || !file) return;
+    const url = URL.createObjectURL(file);
+    if (target.tagName === 'IMG') {
+      target.src = url;
+      target.style.display = 'block';
+      target.onload = function () { URL.revokeObjectURL(url); };
+      return;
+    }
+    target.innerHTML = '<img src="' + url + '" alt="Selected image preview">';
+    const image = target.querySelector('img');
+    if (image) image.onload = function () { URL.revokeObjectURL(url); };
+  }
+  function addLanguageCard() {
+    const grid = document.getElementById('language-card-grid');
+    const input = document.getElementById('new-language-name');
+    if (!grid || !input || !input.value.trim()) return;
+    const index = Number(grid.dataset.nextIndex || '0');
+    const language = input.value.trim();
+    const safeLanguage = language.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
+    const card = document.createElement('div');
+    card.className = 'language-card';
+    card.innerHTML = '<div class="language-card-head"><strong>' + safeLanguage + '</strong><button class="secondary small" type="button" data-remove-language>Remove</button></div>' +
+      '<input type="hidden" name="languageName_' + index + '" value="' + safeLanguage + '">' +
+      '<input type="hidden" name="existingLanguageReferenceImageUrl_' + index + '" value="">' +
+      '<div class="mini-field"><label>Role</label><select name="languageRole_' + index + '"><option value="secondary">Extra language</option><option value="primary">Primary language</option></select></div>' +
+      '<div class="mini-field"><label>Typography reference</label><input name="languageReferenceImage_' + index + '" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></div>' +
+      '<div class="mini-field"><label>AI font style profile</label><textarea name="languageStyleProfile_' + index + '" placeholder="Describe the lettering style for this language."></textarea></div>' +
+      '<label style="display:flex;align-items:center;gap:10px;margin-top:12px;"><input style="width:16px;height:16px;margin:0;" type="checkbox" name="languageEnabled_' + index + '" checked><span>Use this language</span></label>';
+    grid.appendChild(card);
+    grid.dataset.nextIndex = String(index + 1);
+    const count = document.getElementById('language-count');
+    if (count) count.value = String(index + 1);
+    input.value = '';
+  }
+  function addBrandReferenceCard() {
+    const grid = document.getElementById('brand-reference-grid');
+    if (!grid) return;
+    const index = Number(grid.dataset.nextIndex || '0');
+    const card = document.createElement('div');
+    card.className = 'language-card';
+    card.innerHTML = '<div class="language-card-head"><strong>Reference ' + (index + 1) + '</strong><button class="secondary small" type="button" data-remove-brand-reference>Remove</button></div>' +
+      '<div id="brand-reference-preview-' + index + '" class="brand-preview" style="height:96px;margin-bottom:10px;color:var(--text-muted);font-weight:700;">No image</div>' +
+      '<label>What is this image?</label><input name="brandReferenceLabel_' + index + '" placeholder="Font sample, clinic interior, icon style, photo mood">' +
+      '<label>Reference image</label><input name="brandReferenceImage_' + index + '" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange="previewSelectedImage(this, \\'brand-reference-preview-' + index + '\\')">';
+    grid.appendChild(card);
+    grid.dataset.nextIndex = String(index + 1);
+    const count = document.getElementById('brand-reference-count');
+    if (count) count.value = String(index + 1);
+  }
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (target && target instanceof HTMLElement && target.hasAttribute('data-remove-language')) {
+      target.closest('.language-card')?.remove();
+    }
+    if (target && target instanceof HTMLElement && target.hasAttribute('data-remove-brand-reference')) {
+      target.closest('.language-card')?.remove();
+    }
+  });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       document.querySelectorAll('.modal-overlay.is-open').forEach((modal) => closeModal(modal.id));
     }
   });
-  window.addEventListener('DOMContentLoaded', openTargetDrawer);
+  window.addEventListener('DOMContentLoaded', () => { openTargetDrawer(); pollGenerationStatus(); });
   window.addEventListener('hashchange', openTargetDrawer);
 </script></body></html>`;
 }
@@ -723,17 +1033,134 @@ function getCheckmarkIcon(): string {
   return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 }
 
+function getEyeIcon(): string {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+}
+
+function getShareIcon(): string {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><path d="m8.6 10.6 6.8-4.2"></path><path d="m8.6 13.4 6.8 4.2"></path></svg>`;
+}
+
+function getRefreshIcon(): string {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.1 6.6"></path><path d="M3 12A9 9 0 0 1 18.1 5.4"></path><path d="M18 2v4h-4"></path><path d="M6 22v-4h4"></path></svg>`;
+}
+
 function getEmptyCircle(): string {
   return `<div style="width:14px;height:14px;border-radius:50%;border:2px solid currentColor;"></div>`;
+}
+
+function posterLanguageLabel(poster: GeneratedPoster): string {
+  return poster.languageName || poster.languageCode?.toUpperCase() || "Poster";
+}
+
+function generatedPosterActions(input: {
+  brand: BusinessBrandSystem;
+  poster: GeneratedPoster;
+  title: string;
+  date: string;
+  posterType: PosterType;
+}): string {
+  const { brand, poster, title, date, posterType } = input;
+  if (!poster.imageUrl) return "";
+  const imageUrl = poster.imageUrl;
+  const shareText = `${brand.businessName}: ${title}`;
+  const regenerateOnclick = `openRegeneratePosterModal(${jsString(date)}, ${jsString(posterType)}, ${jsString(title)}, ${jsString(poster.languageCode ?? "")}, ${jsString(posterLanguageLabel(poster))})`;
+  const shareOnclick = `sharePoster(${jsString(imageUrl)}, ${jsString(shareText)}, this)`;
+  const copyOnclick = `copyShareUrl(${jsString(imageUrl)}, this)`;
+  const encodedUrl = encodeURIComponent(imageUrl);
+  const encodedText = encodeURIComponent(shareText);
+  const whatsAppUrl = `https://wa.me/?text=${encodedText}%20${encodedUrl}`;
+  const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`;
+  const xUrl = `https://twitter.com/intent/tweet?text=${encodedText}&url=${encodedUrl}`;
+
+  return `<a class="button secondary small icon-button" href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener" title="Preview poster" aria-label="Preview poster">${getEyeIcon()}</a>
+          <details class="share-menu">
+            <summary class="button secondary small icon-button" title="Share poster" aria-label="Share poster">${getShareIcon()}</summary>
+            <div class="share-options">
+              <button class="secondary small" type="button" onclick="${escapeHtml(shareOnclick)}">Share</button>
+              <a class="button secondary small" href="${escapeHtml(whatsAppUrl)}" target="_blank" rel="noopener">WhatsApp</a>
+              <a class="button secondary small" href="${escapeHtml(facebookUrl)}" target="_blank" rel="noopener">Facebook</a>
+              <a class="button secondary small" href="${escapeHtml(xUrl)}" target="_blank" rel="noopener">X</a>
+              <button class="secondary small" type="button" onclick="${escapeHtml(copyOnclick)}">Copy link</button>
+            </div>
+          </details>
+          <button class="secondary small icon-button" type="button" onclick="${escapeHtml(regenerateOnclick)}" title="Regenerate poster" aria-label="Regenerate poster">${getRefreshIcon()}</button>`;
+}
+
+function generatedPosterVariantActions(input: {
+  brand: BusinessBrandSystem;
+  posters: GeneratedPoster[];
+  title: string;
+  date: string;
+  posterType: PosterType;
+}): string {
+  const { brand, posters, title, date, posterType } = input;
+  const readyPosters = posters.filter((poster) => poster.imageUrl);
+  if (!readyPosters.length) return "";
+  return `<div class="poster-variant-actions">
+    ${readyPosters
+      .map((poster) => {
+        const label = posterLanguageLabel(poster);
+        const imageUrl = poster.imageUrl!;
+        const shareText = `${brand.businessName}: ${title} (${label})`;
+        const shareOnclick = `sharePoster(${jsString(imageUrl)}, ${jsString(shareText)}, this)`;
+        const copyOnclick = `copyShareUrl(${jsString(imageUrl)}, this)`;
+        const encodedUrl = encodeURIComponent(imageUrl);
+        const encodedText = encodeURIComponent(shareText);
+        const whatsAppUrl = `https://wa.me/?text=${encodedText}%20${encodedUrl}`;
+        const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`;
+        const xUrl = `https://twitter.com/intent/tweet?text=${encodedText}&url=${encodedUrl}`;
+        const regenerateOnclick = `openRegeneratePosterModal(${jsString(date)}, ${jsString(posterType)}, ${jsString(title)}, ${jsString(poster.languageCode ?? "")}, ${jsString(label)})`;
+        return `<div class="poster-variant-action-row">
+          <span class="language-name">${escapeHtml(label)}</span>
+          <a class="button secondary small icon-button" href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener" title="Preview poster: ${escapeHtml(label)}" aria-label="Preview poster: ${escapeHtml(label)}">${getEyeIcon()}</a>
+          <a class="button secondary small" href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener" download>Download</a>
+          <details class="share-menu">
+            <summary class="button secondary small icon-button" title="Share poster: ${escapeHtml(label)}" aria-label="Share poster: ${escapeHtml(label)}">${getShareIcon()}</summary>
+            <div class="share-options">
+              <button class="secondary small" type="button" onclick="${escapeHtml(shareOnclick)}">Share</button>
+              <a class="button secondary small" href="${escapeHtml(whatsAppUrl)}" target="_blank" rel="noopener">WhatsApp</a>
+              <a class="button secondary small" href="${escapeHtml(facebookUrl)}" target="_blank" rel="noopener">Facebook</a>
+              <a class="button secondary small" href="${escapeHtml(xUrl)}" target="_blank" rel="noopener">X</a>
+              <button class="secondary small" type="button" onclick="${escapeHtml(copyOnclick)}">Copy link</button>
+            </div>
+          </details>
+          <button class="secondary small icon-button" type="button" onclick="${escapeHtml(regenerateOnclick)}" title="Regenerate poster: ${escapeHtml(label)}" aria-label="Regenerate poster: ${escapeHtml(label)}">${getRefreshIcon()}</button>
+        </div>`;
+      })
+      .join("")}
+  </div>`;
+}
+
+function posterVariantPreview(posters: GeneratedPoster[]): string {
+  const readyPosters = posters.filter((poster) => poster.imageUrl);
+  if (!readyPosters.length) {
+    return `<div style="padding: 40px; text-align: center; color: var(--text-muted); font-weight: 600;">No poster ready.<br><span style="font-weight:400; font-size:0.9rem;">Generate it now or wait for automation.</span></div>`;
+  }
+  if (readyPosters.length === 1) {
+    const poster = readyPosters[0]!;
+    return `<img src="${escapeHtml(poster.imageUrl)}" alt="${escapeHtml(posterLanguageLabel(poster))} generated poster">`;
+  }
+  return `<div class="poster-variant-preview-grid">
+    ${readyPosters
+      .map(
+        (
+          poster,
+        ) => `<a class="poster-variant-preview" href="${escapeHtml(poster.imageUrl)}" target="_blank" rel="noopener">
+          <img src="${escapeHtml(poster.imageUrl)}" alt="${escapeHtml(posterLanguageLabel(poster))} generated poster">
+          <span class="poster-variant-label">${escapeHtml(posterLanguageLabel(poster))}</span>
+        </a>`,
+      )
+      .join("")}
+  </div>`;
 }
 
 function entryForm(input: {
   brand: BusinessBrandSystem;
   entry: ContentCalendarEntry | null;
   date: string;
-  templatePatterns: PosterTemplatePattern[];
 }): string {
-  const { brand, entry, date, templatePatterns } = input;
+  const { brand, entry, date } = input;
   const mode = entry?.posterMode ?? "normal";
   const status = entry?.status ?? "planned";
   const posterType = entry?.posterType ?? "general";
@@ -754,8 +1181,6 @@ function entryForm(input: {
         </select></div>
         <div><label>Poster type</label><select name="posterType">${posterTypeOptions(posterType)}</select></div>
       </div>
-      <label>Poster style</label><select name="templateId">${templateOptions(templatePatterns, entry?.templateId ?? null)}</select>
-      <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">Leave this on Auto choose unless you want a specific saved template pattern for this date.</p>
       <div class="fields">
         <div><label>Status</label><select name="status">
           <option value="planned"${selected("planned", status)}>Planned</option>
@@ -773,7 +1198,17 @@ function entryForm(input: {
       <label>Notes</label><textarea name="notes" placeholder="Optional guidance: style, do/don't copy, offer terms, audience, etc.">${escapeHtml(entry?.notes ?? "")}</textarea>
       <div class="task-actions" style="margin-top: 24px; justify-content: flex-start;">
         <button type="submit">Save Task</button>
+        ${
+          entry
+            ? `<button class="secondary" type="submit" formaction="/app/${escapeHtml(brand.businessSlug)}/calendar/regenerate-content" formmethod="post">Regenerate Content</button>`
+            : ""
+        }
         <button class="secondary" type="submit" formaction="/app/${escapeHtml(brand.businessSlug)}/calendar/generate-poster">Generate Poster Now</button>
+        ${
+          entry
+            ? `<button class="danger" type="submit" formaction="/app/${escapeHtml(brand.businessSlug)}/calendar/delete" formmethod="post" onclick="return confirm('Delete this task and its generated posters?');">Delete Task</button>`
+            : ""
+        }
       </div>
     </form>
     <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/calendar/edit-poster" style="border-top: 1px solid var(--border-color); margin-top: 22px; padding-top: 18px;">
@@ -798,12 +1233,12 @@ export function renderCustomerApp(input: {
   todayEntry: ContentCalendarEntry | null;
   todayPoster: GeneratedPoster | null;
   recentPosters: GeneratedPoster[];
-  templatePatterns: PosterTemplatePattern[];
   automationSettings: AutomationSettings;
   calendarPage?: number;
   historyPage?: number;
   historyPosterType?: string;
   historyStatus?: string;
+  taskFilter?: string;
   editDate?: string;
   message?: string;
   error?: string;
@@ -817,19 +1252,37 @@ export function renderCustomerApp(input: {
     todayEntry,
     todayPoster,
     recentPosters,
-    templatePatterns,
     automationSettings,
     message,
     error,
   } = input;
+  const taskFilter = input.taskFilter || "future";
   const entryByDate = new Map(
     calendarEntries.map((entry) => [entry.date, entry]),
   );
+  const readyPostersByDate = new Map<string, GeneratedPoster[]>();
+  for (const poster of recentPosters) {
+    if (poster.status !== "ready" || !poster.imageUrl) continue;
+    const posters = readyPostersByDate.get(poster.date) ?? [];
+    posters.push(poster);
+    readyPostersByDate.set(poster.date, posters);
+  }
   const [year, monthNumber] = month.split("-").map(Number);
   const daysInMonth = new Date(year!, monthNumber!, 0).getDate();
+  const periodStart = month === today.slice(0, 7) ? today : `${month}-01`;
+  const periodEnd = `${month}-${String(daysInMonth).padStart(2, "0")}`;
   const dates = Array.from({ length: daysInMonth }, (_, index) => {
     const day = String(index + 1).padStart(2, "0");
     return `${month}-${day}`;
+  });
+  const visibleDates = dates.filter((date) => {
+    const entry = entryByDate.get(date) ?? null;
+    if (taskFilter === "all") return true;
+    if (taskFilter === "past") return date < today;
+    if (taskFilter === "ready") return entry?.status === "poster_ready";
+    if (taskFilter === "empty") return !entry;
+    if (taskFilter === "skipped") return entry?.status === "skipped";
+    return date >= today;
   });
 
   const readyCount = calendarEntries.filter(
@@ -840,11 +1293,17 @@ export function renderCustomerApp(input: {
   ).length;
   const missingCount = dates.length - calendarEntries.length;
   const readyPercentage = Math.round((readyCount / dates.length) * 100);
-
-  const todayImage =
-    todayPoster?.status === "ready" && todayPoster.imageUrl
-      ? `<img src="${escapeHtml(todayPoster.imageUrl)}" alt="Today's generated poster">`
-      : `<div style="padding: 40px; text-align: center; color: var(--text-muted); font-weight: 600;">No poster ready.<br><span style="font-weight:400; font-size:0.9rem;">Generate it now or wait for automation.</span></div>`;
+  const todayPosterType =
+    todayPoster?.posterType ?? todayEntry?.posterType ?? "general";
+  const todayReadyPosters = readyPostersByDate.get(today) ?? [];
+  const todayPosterVariants =
+    todayReadyPosters.filter((poster) => poster.posterType === todayPosterType)
+      .length > 0
+      ? todayReadyPosters.filter(
+          (poster) => poster.posterType === todayPosterType,
+        )
+      : todayReadyPosters;
+  const todayImage = posterVariantPreview(todayPosterVariants);
 
   const todayDateObj = new Date();
   const dateFormatted = todayDateObj.toLocaleDateString("en-US", {
@@ -855,16 +1314,28 @@ export function renderCustomerApp(input: {
   });
   const brandInitial = brand.businessName.charAt(0).toUpperCase();
 
-  const calendarRows = dates
-    .map((date) => {
-      const entry = entryByDate.get(date) ?? null;
-      const displayStatus = entry?.status ?? "empty";
-      const icon =
-        displayStatus === "poster_ready"
-          ? getCheckmarkIcon()
-          : getEmptyCircle();
+  const calendarRows = visibleDates.length
+    ? visibleDates
+        .map((date) => {
+          const entry = entryByDate.get(date) ?? null;
+          const posterType = entry?.posterType ?? "general";
+          const readyPosters = readyPostersByDate.get(date) ?? [];
+          const generatedPosters =
+            readyPosters.filter((poster) => poster.posterType === posterType)
+              .length > 0
+              ? readyPosters.filter(
+                  (poster) => poster.posterType === posterType,
+                )
+              : readyPosters;
+          const displayStatus = generatedPosters.length
+            ? "poster_ready"
+            : (entry?.status ?? "empty");
+          const icon =
+            displayStatus === "poster_ready"
+              ? getCheckmarkIcon()
+              : getEmptyCircle();
 
-      return `<div class="task-item">
+          return `<div class="task-item">
         <div class="status-icon ${escapeHtml(displayStatus)}">${icon}</div>
         <div class="task-content">
           <p class="title">${escapeHtml(entry?.topic ?? "No content planned")} <span class="badge" style="margin-left: 8px;">${escapeHtml(date.slice(5))}</span></p>
@@ -874,14 +1345,33 @@ export function renderCustomerApp(input: {
         <div class="task-actions">
           ${entry?.inspirationImageUrl ? `<img class="thumb" src="${escapeHtml(entry.inspirationImageUrl)}" alt="Inspiration">` : ""}
           <a class="button secondary small" href="#edit-${escapeHtml(date)}">Edit</a>
-          <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/calendar/generate-poster">
-            <input type="hidden" name="date" value="${escapeHtml(date)}">
-            <button class="small" type="submit">Generate</button>
-          </form>
+          ${
+            entry
+              ? `<form method="post" action="/app/${escapeHtml(brand.businessSlug)}/calendar/delete">
+                  <input type="hidden" name="date" value="${escapeHtml(date)}">
+                  <button class="danger small" type="submit" onclick="return confirm('Delete this task and its generated posters?');">Delete</button>
+                </form>`
+              : ""
+          }
+          ${
+            generatedPosters.length
+              ? generatedPosterVariantActions({
+                  brand,
+                  posters: generatedPosters,
+                  title: entry?.topic ?? "Generated poster",
+                  date,
+                  posterType,
+                })
+              : `<form method="post" action="/app/${escapeHtml(brand.businessSlug)}/calendar/generate-poster">
+                  <input type="hidden" name="date" value="${escapeHtml(date)}">
+                  <button class="small" type="submit">Generate</button>
+                </form>`
+          }
         </div>
-      </div>${entryForm({ brand, entry, date, templatePatterns })}`;
-    })
-    .join("");
+      </div>${entryForm({ brand, entry, date })}`;
+        })
+        .join("")
+    : `<div style="padding: 24px; text-align: center; color: var(--text-muted); font-weight: 600; border: 1px dashed var(--border-color); border-radius: var(--radius-md);">No ${escapeHtml(taskFilterLabel(taskFilter).toLowerCase())} for this month.</div>`;
 
   const nextHtml = nextEntries.length
     ? nextEntries
@@ -921,6 +1411,77 @@ export function renderCustomerApp(input: {
         })
         .join("")}</div>`
     : `<div style="padding: 24px; text-align: center; color: var(--text-muted); font-weight: 600; border: 1px dashed var(--border-color); border-radius: var(--radius-md);">Generated posters will appear here.</div>`;
+  const styleSheetText = [
+    `Typography: ${brand.typography.headingStyle}`,
+    `Body: ${brand.typography.bodyStyle}`,
+    `Font mood: ${brand.typography.fontMood}`,
+    `Visual mood: ${brand.visualStyle.mood}`,
+    `Layout: ${brand.visualStyle.layout}`,
+    `Photo style: ${brand.visualStyle.photoStyle}`,
+    `Avoid: ${brand.visualStyle.avoid.join(", ")}`,
+    `Poster rules: ${brand.defaultPosterRules.join(" ")}`,
+  ].join("\n");
+  const rawLanguageTypography: Partial<
+    NonNullable<BusinessBrandSystem["languageTypography"]>
+  > = brand.languageTypography ?? {};
+  const languageTypography = {
+    enabled: rawLanguageTypography.enabled === true,
+    primaryLanguage: rawLanguageTypography.primaryLanguage || "English",
+    additionalLanguages: Array.isArray(
+      rawLanguageTypography.additionalLanguages,
+    )
+      ? rawLanguageTypography.additionalLanguages
+      : [],
+    typographyReferenceImageUrl:
+      rawLanguageTypography.typographyReferenceImageUrl ?? null,
+    typographyStyleProfile:
+      rawLanguageTypography.typographyStyleProfile ?? null,
+    useReferenceForAllPosters:
+      rawLanguageTypography.useReferenceForAllPosters === true,
+  };
+  const languageProfiles = rawLanguageTypography.profiles?.length
+    ? rawLanguageTypography.profiles
+    : [
+        {
+          language: languageTypography.primaryLanguage,
+          role: "primary" as const,
+          referenceImageUrl: languageTypography.typographyReferenceImageUrl,
+          styleProfile: languageTypography.typographyStyleProfile,
+          enabled: true,
+        },
+        ...languageTypography.additionalLanguages.map((language) => ({
+          language,
+          role: "secondary" as const,
+          referenceImageUrl: languageTypography.typographyReferenceImageUrl,
+          styleProfile: languageTypography.typographyStyleProfile,
+          enabled: true,
+        })),
+      ];
+  const languageCards = languageProfiles
+    .map((profile, index) => {
+      const role = profile.role === "primary" ? "primary" : "secondary";
+      return `<div class="language-card">
+        <div class="language-card-head">
+          <strong>${escapeHtml(profile.language || `Language ${index + 1}`)}</strong>
+          <span class="badge">${escapeHtml(role === "primary" ? "Primary" : "Extra")}</span>
+        </div>
+        <input type="hidden" name="existingLanguageReferenceImageUrl_${index}" value="${escapeHtml(profile.referenceImageUrl ?? "")}">
+        <div class="mini-field"><label>Language</label><input name="languageName_${index}" value="${escapeHtml(profile.language)}" placeholder="Malayalam"></div>
+        <div class="mini-field"><label>Role</label><select name="languageRole_${index}">
+          <option value="primary"${selected("primary", role)}>Primary language</option>
+          <option value="secondary"${selected("secondary", role)}>Extra language</option>
+        </select></div>
+        <div class="mini-field"><label>Typography reference</label><input name="languageReferenceImage_${index}" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></div>
+        ${
+          profile.referenceImageUrl
+            ? `<span class="reference-chip">Reference saved</span>`
+            : `<p style="font-size: 0.8rem; color: var(--text-muted); margin: 8px 0 0;">Add a clear image of the lettering style.</p>`
+        }
+        <div class="mini-field"><label>AI font style profile</label><textarea name="languageStyleProfile_${index}" placeholder="Example: Bold rounded Malayalam display lettering, thick strokes, soft curves.">${escapeHtml(profile.styleProfile ?? "")}</textarea></div>
+        <label style="display:flex;align-items:center;gap:10px;margin-top:12px;"><input style="width:16px;height:16px;margin:0;" type="checkbox" name="languageEnabled_${index}"${checked(profile.enabled !== false)}><span>Use this language</span></label>
+      </div>`;
+    })
+    .join("");
 
   return document(
     `${brand.businessName} — Dashboard`,
@@ -937,13 +1498,16 @@ export function renderCustomerApp(input: {
               : `<span class="pulse-dot-paused" title="Automation Paused"></span>`
           }
           <a class="button secondary small" href="/admin/${escapeHtml(brand.businessSlug)}">Admin ↗</a>
+          <form method="post" action="/admin/logout" style="margin:0;">
+            <button class="secondary small" type="submit">Logout</button>
+          </form>
         </div>
       </div>
       <nav class="nav">
         <a href="#today">Dashboard</a>
         <a href="#calendar">Tasks</a>
         <a href="#inspiration">Inspiration</a>
-        <a href="#templates">Brand</a>
+        <a href="#brand">Brand</a>
         <a href="#settings">Settings</a>
         <a href="#history">History</a>
       </nav>
@@ -957,6 +1521,7 @@ export function renderCustomerApp(input: {
 
       ${message ? `<div class="alert">${escapeHtml(message)}</div>` : ""}
       ${error ? `<div class="alert error">${escapeHtml(error)}</div>` : ""}
+      ${message?.toLowerCase().includes("generation started") ? `<div id="generation-status" class="alert info">Generation is running. You can stay on this page while the app checks for the finished poster.</div>` : ""}
       
       <!-- VIEW: TODAY'S DASHBOARD -->
       <section class="view-panel" id="today">
@@ -1004,9 +1569,30 @@ export function renderCustomerApp(input: {
             }
             
             <div class="task-actions" style="justify-content: flex-start; margin-top: auto;">
-              ${todayPoster?.imageUrl ? `<a class="button" href="${escapeHtml(todayPoster.imageUrl)}" target="_blank" rel="noopener">Download File</a>` : ""}
+              ${
+                todayPosterVariants.length
+                  ? todayPosterVariants
+                      .filter((poster) => poster.imageUrl)
+                      .map(
+                        (poster) =>
+                          `<a class="button" href="${escapeHtml(poster.imageUrl)}" target="_blank" rel="noopener" download>Download ${escapeHtml(posterLanguageLabel(poster))}</a>`,
+                      )
+                      .join("")
+                  : ""
+              }
               <a class="button secondary" href="#edit-${escapeHtml(today)}">Edit Details</a>
-              <button class="secondary" type="button" onclick="openModal('regenerate-modal')">Regenerate</button>
+              ${
+                todayPosterVariants.length
+                  ? todayPosterVariants
+                      .filter((poster) => poster.imageUrl)
+                      .map((poster) => {
+                        const label = posterLanguageLabel(poster);
+                        const onclick = `openRegeneratePosterModal(${jsString(today)}, ${jsString(todayPosterType)}, ${jsString(todayEntry?.topic ?? "Today's poster")}, ${jsString(poster.languageCode ?? "")}, ${jsString(label)})`;
+                        return `<button class="secondary small" type="button" onclick="${escapeHtml(onclick)}">Regenerate ${escapeHtml(label)}</button>`;
+                      })
+                      .join("")
+                  : ""
+              }
             </div>
           </div>
         </article>
@@ -1023,8 +1609,10 @@ export function renderCustomerApp(input: {
           </div>
           <div class="modal-body">
             <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/calendar/edit-poster">
-              <input type="hidden" name="date" value="${escapeHtml(today)}">
-              <input type="hidden" name="posterType" value="${escapeHtml(todayPoster?.posterType ?? todayEntry?.posterType ?? "general")}">
+              <input id="regenerate-date" type="hidden" name="date" value="${escapeHtml(today)}">
+              <input id="regenerate-poster-type" type="hidden" name="posterType" value="${escapeHtml(todayPosterType)}">
+              <input id="regenerate-language-code" type="hidden" name="languageCode" value="">
+              <p id="regenerate-language-label" class="badge" style="display:inline-flex; margin: 0 0 12px;">Choose a language-specific regenerate button from the task row.</p>
               <label>Custom regeneration instruction</label>
               <textarea name="editInstruction" required placeholder="Example: Keep the same layout, make the headline shorter, use a softer premium background, and make the CTA more visible."></textarea>
               <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 6px;">The current poster image will be used as the source, then regenerated according to your instruction while keeping the brand logo, colors, and contact details consistent.</p>
@@ -1042,23 +1630,41 @@ export function renderCustomerApp(input: {
         <div style="display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 16px; margin-bottom: 24px;">
           <div>
             <h2>Daily Tasks</h2>
-            <p style="color: var(--text-secondary); margin: 0;">${escapeHtml(month)}. Manage your monthly content pipeline.</p>
+            <p style="color: var(--text-secondary); margin: 0;">${escapeHtml(month)} · ${escapeHtml(taskFilterLabel(taskFilter))}. Manage your monthly content pipeline.</p>
           </div>
-          <form method="get" action="/app/${escapeHtml(brand.businessSlug)}">
+          <form method="get" action="/app/${escapeHtml(brand.businessSlug)}#calendar" style="display:flex; gap: 8px; flex-wrap: wrap; align-items: center;">
             <input type="month" name="month" value="${escapeHtml(month)}" onchange="this.form.submit()" style="width: auto; padding: 8px 12px; font-weight: 600;">
+            <select name="taskFilter" onchange="this.form.submit()" style="width: auto; padding: 8px 12px; font-weight: 600;">
+              <option value="future"${selected("future", taskFilter)}>Future tasks</option>
+              <option value="all"${selected("all", taskFilter)}>All tasks</option>
+              <option value="past"${selected("past", taskFilter)}>Past tasks</option>
+              <option value="ready"${selected("ready", taskFilter)}>Poster ready</option>
+              <option value="empty"${selected("empty", taskFilter)}>Empty dates</option>
+              <option value="skipped"${selected("skipped", taskFilter)}>Skipped</option>
+            </select>
           </form>
         </div>
 
         <details class="drawer">
-          <summary><strong>Generate tasks with AI</strong></summary>
-          <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/calendar/generate-month">
+          <summary><strong>Generate or refresh task content</strong></summary>
+          <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/calendar/generate-period">
             <input type="hidden" name="month" value="${escapeHtml(month)}">
+            <div class="fields">
+              <div><label>Start date</label><input name="fromDate" type="date" value="${escapeHtml(periodStart)}"></div>
+              <div><label>End date</label><input name="toDate" type="date" value="${escapeHtml(periodEnd)}"></div>
+            </div>
             <div class="fields">
               <div><label>Posting frequency</label><select name="frequency"><option value="daily">Daily</option><option value="weekdays">Weekdays only</option></select></div>
               <div><label>Content style</label><select name="style"><option value="mixed">Mixed</option><option value="educational">Educational</option><option value="promotional">Promotional</option><option value="engagement">Engagement</option></select></div>
             </div>
             <label>Important notes</label><textarea name="notes" placeholder="Example: promote summer package in last week, avoid discount-heavy tone"></textarea>
-            <div style="margin-top: 16px;"><button type="submit">Generate Pipeline</button></div>
+            <div class="task-actions" style="justify-content:flex-start; margin-top: 16px;">
+              <button type="submit" name="mode" value="generate">Generate Content</button>
+              <button class="secondary" type="submit" name="mode" value="regenerate-existing">Regenerate Existing Content</button>
+            </div>
+          </form>
+          <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/calendar/delete-all" style="border-top:1px solid var(--border-color); margin-top:18px; padding-top:16px;">
+            <button class="danger" type="submit" onclick="return confirm('Delete all existing tasks and their generated posters for this workspace?');">Delete All Tasks</button>
           </form>
         </details>
 
@@ -1069,13 +1675,13 @@ export function renderCustomerApp(input: {
       <section class="card view-panel" id="inspiration">
         <h2>Inspiration Poster</h2>
         <p style="color: var(--text-secondary); margin-bottom: 24px;">Upload an inspiration poster, add your own message, and save it to a calendar date. The design direction is used; competitor branding, text, claims, and contact details are not copied.</p>
-        ${entryForm({ brand, entry: { businessSlug: brand.businessSlug, date: today, topic: "", message: null, cta: null, posterMode: "inspiration", posterType: "reference", templateId: null, inspirationImageUrl: null, notes: null, status: "planned" }, date: today, templatePatterns })}
+        ${entryForm({ brand, entry: { businessSlug: brand.businessSlug, date: today, topic: "", message: null, cta: null, posterMode: "inspiration", posterType: "reference", templateId: null, inspirationImageUrl: null, notes: null, status: "planned" }, date: today })}
       </section>
       
-      <!-- VIEW: TEMPLATES & BRAND -->
-      <section class="card view-panel" id="templates">
+      <!-- VIEW: BRAND -->
+      <section class="card view-panel" id="brand">
         <h2>Brand Identity</h2>
-        <p style="color: var(--text-secondary); margin-bottom: 24px;">Current brand style configuration and template assets.</p>
+        <p style="color: var(--text-secondary); margin-bottom: 24px;">The brand board is the single visual reference used for poster generation.</p>
         
         <div class="fields" style="margin-bottom: 32px;">
           <div style="background: var(--bg-color); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
@@ -1087,58 +1693,58 @@ export function renderCustomerApp(input: {
             <h3>Style Summary</h3>
             <p style="font-size: 0.9rem;"><strong>Typography:</strong><br>${escapeHtml(brand.typography.headingStyle)}</p>
             <p style="font-size: 0.9rem;"><strong>Mood:</strong><br>${escapeHtml(brand.visualStyle.mood)}</p>
-            <p style="font-size: 0.9rem;"><strong>Layout:</strong><br>${escapeHtml(brand.visualStyle.layout)}</p>
+            <p style="font-size: 0.9rem;"><strong>Composition guidance:</strong><br>${escapeHtml(brand.visualStyle.layout)}</p>
             <p style="font-size: 0.9rem;"><strong>Photo style:</strong><br>${escapeHtml(brand.visualStyle.photoStyle)}</p>
             <div style="margin-top: 24px;"><a class="button secondary small" href="/admin/${escapeHtml(brand.businessSlug)}#brand">Edit Configuration</a></div>
           </div>
         </div>
 
         <details class="drawer">
-          <summary><strong>Generate template ideas</strong></summary>
-          <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/templates/generate">
-            <label>What kind of templates do you want?</label>
-            <textarea name="notes" placeholder="Example: premium clinic style, clean educational posts, festival greetings"></textarea>
-            <div style="margin-top: 16px;"><button type="submit">Generate Ideas</button></div>
+          <summary><strong>Upload or edit brand board</strong></summary>
+          <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/brand/style-sheet" enctype="multipart/form-data">
+            <div class="style-sheet-preview">
+              <img id="style-sheet-image-preview" src="${escapeHtml(brand.brandReferenceBoardUrl)}" alt="Current brand style sheet">
+              <div>
+                <label style="margin-top:0;">Upload brand board image</label>
+                <input name="styleSheetImage" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange="previewSelectedImage(this, 'style-sheet-image-preview')">
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">This image is sent with every poster generation as the main brand reference.</p>
+              </div>
+            </div>
+            <label>Brand board notes</label>
+            <textarea name="styleSheetText" rows="8" placeholder="Optional. Example: build a clinic brand board from the logo colors, include swatches, heading/body typography mood, photo style, icon style, spacing cues, social poster dos and don'ts.">${escapeHtml(styleSheetText)}</textarea>
+            <div style="border-top: 1px solid var(--border-color); margin-top: 20px; padding-top: 18px;">
+              <h3 style="margin-top:0;">Tagged AI references</h3>
+              <p style="font-size: 0.88rem; color: var(--text-secondary); margin-top: -4px;">Optional. Upload multiple images and label what each one is so AI can place it into the right brand-board section.</p>
+              <input id="brand-reference-count" type="hidden" name="brandReferenceCount" value="2">
+              <div id="brand-reference-grid" class="language-grid" data-next-index="2">
+                <div class="language-card">
+                  <div class="language-card-head"><strong>Reference 1</strong><span class="badge">Optional</span></div>
+                  <div id="brand-reference-preview-0" class="brand-preview" style="height:96px;margin-bottom:10px;color:var(--text-muted);font-weight:700;">No image</div>
+                  <label>What is this image?</label><input name="brandReferenceLabel_0" placeholder="Font sample, clinic interior, icon style, photo mood">
+                  <label>Reference image</label><input name="brandReferenceImage_0" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange="previewSelectedImage(this, 'brand-reference-preview-0')">
+                </div>
+                <div class="language-card">
+                  <div class="language-card-head"><strong>Reference 2</strong><span class="badge">Optional</span></div>
+                  <div id="brand-reference-preview-1" class="brand-preview" style="height:96px;margin-bottom:10px;color:var(--text-muted);font-weight:700;">No image</div>
+                  <label>What is this image?</label><input name="brandReferenceLabel_1" placeholder="Font sample, clinic interior, icon style, photo mood">
+                  <label>Reference image</label><input name="brandReferenceImage_1" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange="previewSelectedImage(this, 'brand-reference-preview-1')">
+                </div>
+              </div>
+              <button class="secondary small" style="margin-top: 12px;" type="button" onclick="addBrandReferenceCard()">Add reference</button>
+            </div>
+            <div class="task-actions" style="justify-content:flex-start; margin-top: 16px;">
+              <button type="submit">Save Brand Board</button>
+              <button class="secondary" type="submit" formaction="/app/${escapeHtml(brand.businessSlug)}/brand/style-sheet/generate">Update with AI</button>
+            </div>
           </form>
         </details>
-
-        <h3 style="margin-top: 32px;">Active Templates</h3>
-        ${
-          templatePatterns.length
-            ? `<div class="task-list">${templatePatterns
-                .map(
-                  (
-                    pattern,
-                  ) => `<div class="task-item" style="grid-template-columns: 60px 1fr auto;">
-                    <div>${pattern.previewImageUrl ? `<img class="thumb" style="width:60px;height:60px;" src="${escapeHtml(pattern.previewImageUrl)}" alt="">` : `<span class="badge">${escapeHtml(pattern.isActive ? "active" : "paused")}</span>`}</div>
-                    <div class="task-content">
-                      <p class="title">${escapeHtml(pattern.name)}</p>
-                      <p class="meta" style="margin-bottom:4px;">${escapeHtml(pattern.bestFor)}</p>
-                      <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0; line-height: 1.4;">${escapeHtml(pattern.description)}</p>
-                    </div>
-                    <div class="task-actions">
-                      <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/templates/toggle">
-                        <input type="hidden" name="templateId" value="${escapeHtml(pattern.templateId)}">
-                        <input type="hidden" name="isActive" value="${escapeHtml(pattern.isActive ? "false" : "true")}">
-                        <button class="secondary small" type="submit">${escapeHtml(pattern.isActive ? "Pause" : "Activate")}</button>
-                      </form>
-                      <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/templates/delete">
-                        <input type="hidden" name="templateId" value="${escapeHtml(pattern.templateId)}">
-                        <button class="danger small" type="submit">Delete</button>
-                      </form>
-                    </div>
-                  </div>`,
-                )
-                .join("")}</div>`
-            : `<div style="padding: 24px; text-align: center; color: var(--text-muted); font-weight: 600; border: 1px dashed var(--border-color); border-radius: var(--radius-md);">No template patterns yet.</div>`
-        }
       </section>
       
       <!-- VIEW: AUTOMATION SETTINGS -->
       <section class="card view-panel" id="settings">
         <h2>Automation Settings</h2>
         <p style="color: var(--text-secondary); margin-bottom: 24px;">Configure when the poster is generated and which emails receive the completed designs daily.</p>
-        <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/settings" style="max-width: 600px;">
+        <form method="post" action="/app/${escapeHtml(brand.businessSlug)}/settings" enctype="multipart/form-data" style="max-width: 760px;">
           <label style="display: flex; align-items: center; gap: 12px; font-size: 1.05rem; cursor: pointer; margin-bottom: 24px; padding: 16px; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: var(--radius-md);">
             <input style="width: 20px; height: 20px; margin: 0;" type="checkbox" name="enabled"${checked(automationSettings.enabled)}> 
             <strong>Daily posters active</strong>
@@ -1152,6 +1758,26 @@ export function renderCustomerApp(input: {
             <input style="width: 18px; height: 18px; margin: 0;" type="checkbox" name="emailEnabled"${checked(automationSettings.emailEnabled)}> 
             <span style="font-weight: 600;">Email poster automatically after generation</span>
           </label>
+          <div style="border-top: 1px solid var(--border-color); margin-top: 30px; padding-top: 24px;">
+            <h3 style="margin: 0 0 8px;">Languages & typography</h3>
+            <p style="color: var(--text-secondary); margin: 0 0 18px;">Optional. Use a reference image so Gemini keeps regional-language poster text close to your preferred lettering style.</p>
+            <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; margin-bottom: 18px;">
+              <input style="width: 18px; height: 18px; margin: 0;" type="checkbox" name="languageTypographyEnabled"${checked(languageTypography.enabled)}> 
+              <span style="font-weight: 600;">Create posters with language/font guidance</span>
+            </label>
+            <input id="language-count" type="hidden" name="languageCount" value="${languageProfiles.length}">
+            <div class="language-grid" id="language-card-grid" data-next-index="${languageProfiles.length}">
+              ${languageCards}
+            </div>
+            <div style="display:flex; gap: 8px; align-items: flex-end; margin-top: 14px; flex-wrap: wrap;">
+              <div style="flex: 1 1 220px;"><label>Add another language</label><input id="new-language-name" placeholder="Hindi, Tamil, Arabic"></div>
+              <button class="secondary" type="button" onclick="addLanguageCard()">Add language</button>
+            </div>
+            <label style="display: flex; align-items: center; gap: 12px; cursor: pointer; margin-top: 16px;">
+              <input style="width: 18px; height: 18px; margin: 0;" type="checkbox" name="useReferenceForAllPosters"${checked(languageTypography.useReferenceForAllPosters)}> 
+              <span style="font-weight: 600;">Use this typography reference on every generated poster</span>
+            </label>
+          </div>
           <div style="margin-top: 32px;"><button type="submit">Save Configuration</button></div>
         </form>
       </section>
